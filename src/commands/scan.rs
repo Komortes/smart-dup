@@ -1,8 +1,12 @@
 use crate::cli::ScanArgs;
-use crate::core::models::FileEntry;
-use anyhow::Result;
+use crate::core::models::{DuplicateGroup, FileEntry, ScanResult, ScanSummary};
+use anyhow::{Context, Result};
+use rayon::prelude::*;
 use std::collections::HashMap;
-use std::time::UNIX_EPOCH;
+use std::fs::File;
+use std::io::{BufReader, Read};
+use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 use walkdir::{DirEntry, WalkDir};
 
 pub fn run(args: ScanArgs) -> Result<()> {
@@ -73,12 +77,69 @@ pub fn run(args: ScanArgs) -> Result<()> {
         .map(|(size, group)| size * group.len() as u64)
         .sum::<u64>();
 
-    println!("scan roots: {:?}", args.paths);
-    println!("scanned files: {}", scanned_files);
+    let mut groups = by_size
+        .into_par_iter()
+        .filter_map(|(size, files)| {
+            if files.len() < 2 {
+                return None;
+            }
+            Some(build_duplicate_groups_for_size(size, files))
+        })
+        .reduce(Vec::new, |mut acc, mut next| {
+            acc.append(&mut next);
+            acc
+        });
+
+    groups.sort_by(|a, b| {
+        b.file_size
+            .cmp(&a.file_size)
+            .then_with(|| a.content_hash.cmp(&b.content_hash))
+    });
+
+    let duplicate_groups = groups.len() as u64;
+    let duplicate_files = groups
+        .iter()
+        .map(|group| group.files.len() as u64)
+        .sum::<u64>();
+    let reclaimable_bytes = groups
+        .iter()
+        .map(|group| group.file_size * (group.files.len().saturating_sub(1) as u64))
+        .sum::<u64>();
+
+    let result = ScanResult {
+        roots: args.paths.clone(),
+        generated_at_unix_secs: now_unix_secs(),
+        summary: ScanSummary {
+            scanned_files,
+            candidate_files,
+            duplicate_groups,
+            duplicate_files,
+            reclaimable_bytes,
+        },
+        groups,
+    };
+
+    println!("scan roots: {:?}", result.roots);
+    println!("scanned files: {}", result.summary.scanned_files);
     println!("size-candidate groups: {}", candidate_groups);
-    println!("size-candidate files: {}", candidate_files);
+    println!("size-candidate files: {}", result.summary.candidate_files);
     println!("size-candidate bytes: {}", candidate_bytes);
-    println!("next step: hashing files inside same-size groups");
+    println!("duplicate groups: {}", result.summary.duplicate_groups);
+    println!("duplicate files: {}", result.summary.duplicate_files);
+    println!("reclaimable bytes: {}", result.summary.reclaimable_bytes);
+
+    for (idx, group) in result.groups.iter().enumerate() {
+        println!(
+            "\n[{}] size={} hash={} files={}",
+            idx + 1,
+            group.file_size,
+            group.content_hash,
+            group.files.len()
+        );
+        for file in &group.files {
+            println!("  - {}", file.path.display());
+        }
+    }
 
     if args.json.is_some() || args.csv.is_some() {
         println!("note: --json/--csv export will be implemented in a later step.");
@@ -94,4 +155,60 @@ fn is_ignored(entry: &DirEntry, ignores: &[String]) -> bool {
 
     let path_text = entry.path().to_string_lossy();
     ignores.iter().any(|needle| path_text.contains(needle))
+}
+
+fn build_duplicate_groups_for_size(file_size: u64, files: Vec<FileEntry>) -> Vec<DuplicateGroup> {
+    let mut by_hash: HashMap<String, Vec<FileEntry>> = HashMap::new();
+
+    for file in files {
+        match hash_file_blake3(&file.path) {
+            Ok(content_hash) => by_hash.entry(content_hash).or_default().push(file),
+            Err(err) => eprintln!(
+                "warn: failed to hash {}: {err}",
+                file.path.as_path().display()
+            ),
+        }
+    }
+
+    by_hash
+        .into_iter()
+        .filter_map(|(content_hash, mut hashed_files)| {
+            if hashed_files.len() < 2 {
+                return None;
+            }
+
+            hashed_files.sort_by(|a, b| a.path.cmp(&b.path));
+            Some(DuplicateGroup {
+                file_size,
+                content_hash,
+                files: hashed_files,
+            })
+        })
+        .collect()
+}
+
+fn hash_file_blake3(path: &Path) -> Result<String> {
+    let file = File::open(path).with_context(|| format!("open failed: {}", path.display()))?;
+    let mut reader = BufReader::new(file);
+    let mut hasher = blake3::Hasher::new();
+    let mut buf = [0_u8; 64 * 1024];
+
+    loop {
+        let read = reader
+            .read(&mut buf)
+            .with_context(|| format!("read failed: {}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buf[..read]);
+    }
+
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+fn now_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
