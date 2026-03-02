@@ -10,15 +10,18 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use walkdir::{DirEntry, WalkDir};
 
+const DEFAULT_IGNORES: [&str; 3] = [".git", "node_modules", "target"];
+
 pub fn run(args: ScanArgs) -> Result<()> {
     let mut scanned_files: u64 = 0;
     let mut by_size: HashMap<u64, Vec<FileEntry>> = HashMap::new();
+    let ignore_rules = build_ignore_rules(&args.ignores, args.no_default_ignores);
 
     for root in &args.paths {
         let walker = WalkDir::new(root)
             .follow_links(args.follow_symlinks)
             .into_iter()
-            .filter_entry(|entry| !is_ignored(entry, &args.ignores));
+            .filter_entry(|entry| !is_ignored(entry, &ignore_rules));
 
         for entry in walker {
             let entry = match entry {
@@ -161,7 +164,28 @@ fn is_ignored(entry: &DirEntry, ignores: &[String]) -> bool {
     }
 
     let path_text = entry.path().to_string_lossy();
-    ignores.iter().any(|needle| path_text.contains(needle))
+    let components = entry
+        .path()
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>();
+
+    ignores.iter().any(|rule| {
+        if rule.contains('/') || rule.contains('\\') {
+            path_text.contains(rule.as_str())
+        } else {
+            components.iter().any(|component| component == rule)
+        }
+    })
+}
+
+fn build_ignore_rules(user_ignores: &[String], no_default_ignores: bool) -> Vec<String> {
+    let mut rules = Vec::new();
+    if !no_default_ignores {
+        rules.extend(DEFAULT_IGNORES.iter().map(|s| s.to_string()));
+    }
+    rules.extend(user_ignores.iter().cloned());
+    rules
 }
 
 fn build_duplicate_groups_for_size(file_size: u64, files: Vec<FileEntry>) -> Vec<DuplicateGroup> {
@@ -218,4 +242,24 @@ fn now_unix_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_ignore_rules;
+
+    #[test]
+    fn default_ignore_rules_are_enabled_by_default() {
+        let rules = build_ignore_rules(&["custom".to_string()], false);
+        assert!(rules.contains(&".git".to_string()));
+        assert!(rules.contains(&"node_modules".to_string()));
+        assert!(rules.contains(&"target".to_string()));
+        assert!(rules.contains(&"custom".to_string()));
+    }
+
+    #[test]
+    fn default_ignore_rules_can_be_disabled() {
+        let rules = build_ignore_rules(&["custom".to_string()], true);
+        assert_eq!(rules, vec!["custom".to_string()]);
+    }
 }

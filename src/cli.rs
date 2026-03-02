@@ -39,6 +39,10 @@ pub struct ScanArgs {
     #[arg(long = "ignore")]
     pub ignores: Vec<String>,
 
+    /// Disable built-in ignore directories (.git, node_modules, target)
+    #[arg(long, default_value_t = false)]
+    pub no_default_ignores: bool,
+
     /// Export scan result to JSON file
     #[arg(long)]
     pub json: Option<PathBuf>,
