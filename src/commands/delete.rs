@@ -3,7 +3,7 @@ use crate::core::models::{DuplicateGroup, FileEntry, ScanResult};
 use anyhow::{Context, Result, bail};
 use std::fs::{self, File};
 use std::io::{BufReader, Write, stdin, stdout};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub fn run(args: DeleteArgs) -> Result<()> {
     if !args.dry_run && !args.interactive {
@@ -33,6 +33,8 @@ pub fn run(args: DeleteArgs) -> Result<()> {
     println!("planned reclaimable: {} bytes", planned_bytes);
     println!("keep rule: {:?}", args.keep);
     println!("dry_run: {}", args.dry_run);
+    let use_trash = args.trash && !args.no_trash;
+    println!("trash mode: {}", use_trash);
 
     let mut deleted_files = 0_u64;
     let mut failed_files = 0_u64;
@@ -54,11 +56,11 @@ pub fn run(args: DeleteArgs) -> Result<()> {
         }
 
         for file in &plan.delete_files {
-            match fs::remove_file(&file.path) {
+            match delete_file_safely(&file.path, use_trash) {
                 Ok(_) => {
                     deleted_files += 1;
                     reclaimed_bytes += plan.file_size;
-                    println!("  deleted: {}", file.path.display());
+                    println!("  removed: {}", file.path.display());
                 }
                 Err(err) => {
                     failed_files += 1;
@@ -192,13 +194,102 @@ fn confirm_group(plan: &DeletionPlan) -> Result<bool> {
     Ok(answer == "y" || answer == "yes")
 }
 
+fn delete_file_safely(path: &Path, prefer_trash: bool) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        if prefer_trash {
+            if let Err(err) = move_to_macos_trash(path) {
+                eprintln!(
+                    "  warn: failed to move to Trash ({}), fallback to delete",
+                    err
+                );
+                fs::remove_file(path)
+                    .with_context(|| format!("remove failed for {}", path.display()))?;
+            }
+            return Ok(());
+        } else {
+            fs::remove_file(path)
+                .with_context(|| format!("remove failed for {}", path.display()))?;
+            return Ok(());
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = prefer_trash;
+        fs::remove_file(path).with_context(|| format!("remove failed for {}", path.display()))?;
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn move_to_macos_trash(path: &Path) -> Result<()> {
+    let home = std::env::var_os("HOME").context("HOME is not set")?;
+    let trash_dir = PathBuf::from(home).join(".Trash");
+    fs::create_dir_all(&trash_dir)
+        .with_context(|| format!("failed to create Trash dir {}", trash_dir.display()))?;
+
+    let file_name = path
+        .file_name()
+        .with_context(|| format!("missing file name for {}", path.display()))?;
+    let target = unique_destination_in_dir(&trash_dir, file_name);
+
+    fs::rename(path, &target).with_context(|| {
+        format!(
+            "failed to move {} to {}",
+            path.display(),
+            target.as_path().display()
+        )
+    })?;
+    Ok(())
+}
+
+fn unique_destination_in_dir(dir: &Path, file_name: &std::ffi::OsStr) -> PathBuf {
+    let first = dir.join(file_name);
+    if !first.exists() {
+        return first;
+    }
+
+    let name = file_name.to_string_lossy();
+    let (base, ext) = split_name_and_ext(&name);
+    for idx in 1.. {
+        let candidate = if ext.is_empty() {
+            format!("{base} ({idx})")
+        } else {
+            format!("{base} ({idx}).{ext}")
+        };
+        let path = dir.join(candidate);
+        if !path.exists() {
+            return path;
+        }
+    }
+
+    unreachable!("infinite loop should always return with a free file name")
+}
+
+fn split_name_and_ext(name: &str) -> (&str, &str) {
+    if name.starts_with('.') && !name[1..].contains('.') {
+        return (name, "");
+    }
+    if let Some((base, ext)) = name.rsplit_once('.') {
+        if base.is_empty() {
+            return (name, "");
+        }
+        return (base, ext);
+    }
+    (name, "")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{build_plan_for_group, choose_keep_index, run};
+    use super::{
+        build_plan_for_group, choose_keep_index, delete_file_safely, run, split_name_and_ext,
+        unique_destination_in_dir,
+    };
     use crate::cli::{DeleteArgs, KeepRule};
     use crate::core::models::{DuplicateGroup, FileEntry, ScanResult, ScanSummary};
     use std::fs::{self, File};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -294,12 +385,46 @@ mod tests {
             from_json: json_path,
             dry_run: true,
             interactive: false,
+            trash: false,
+            no_trash: true,
             keep: KeepRule::Oldest,
         };
         run(args).expect("dry-run should succeed");
 
         assert!(keep_path.exists());
         assert!(dup_path.exists());
+
+        fs::remove_dir_all(&tmp).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn split_name_and_ext_works_for_common_cases() {
+        assert_eq!(split_name_and_ext("photo.jpg"), ("photo", "jpg"));
+        assert_eq!(split_name_and_ext("archive.tar.gz"), ("archive.tar", "gz"));
+        assert_eq!(split_name_and_ext(".env"), (".env", ""));
+        assert_eq!(split_name_and_ext("README"), ("README", ""));
+    }
+
+    #[test]
+    fn unique_destination_adds_suffix_when_target_exists() {
+        let tmp = make_temp_dir("trash-name");
+        let first = tmp.join("dup.jpg");
+        File::create(&first).expect("create first file");
+
+        let chosen = unique_destination_in_dir(&tmp, Path::new("dup.jpg").as_os_str());
+        assert_eq!(chosen, tmp.join("dup (1).jpg"));
+
+        fs::remove_dir_all(&tmp).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn direct_delete_removes_file_when_trash_disabled() {
+        let tmp = make_temp_dir("direct-delete");
+        let file_path = tmp.join("x.txt");
+        fs::write(&file_path, b"x").expect("write test file");
+
+        delete_file_safely(&file_path, false).expect("delete should succeed");
+        assert!(!file_path.exists());
 
         fs::remove_dir_all(&tmp).expect("cleanup temp dir");
     }

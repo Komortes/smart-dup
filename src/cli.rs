@@ -77,6 +77,14 @@ pub struct DeleteArgs {
     #[arg(long, default_value_t = false)]
     pub interactive: bool,
 
+    /// Try moving files to Trash before direct delete (default: true on macOS)
+    #[arg(long, default_value_t = cfg!(target_os = "macos"))]
+    pub trash: bool,
+
+    /// Disable Trash mode and force direct delete
+    #[arg(long = "no-trash", default_value_t = false)]
+    pub no_trash: bool,
+
     /// Rule for deciding which file to keep
     #[arg(long, value_enum, default_value_t = KeepRule::Oldest)]
     pub keep: KeepRule,
@@ -184,5 +192,22 @@ mod tests {
     fn parse_threads_rejects_zero() {
         let parsed = Cli::try_parse_from(["smartdup", "scan", "/tmp", "--threads", "0"]);
         assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn parse_delete_no_trash_flag() {
+        let cli = Cli::try_parse_from([
+            "smartdup",
+            "delete",
+            "--from",
+            "/tmp/report.json",
+            "--dry-run",
+            "--no-trash",
+        ])
+        .unwrap();
+        let Commands::Delete(args) = cli.command else {
+            panic!("expected delete command");
+        };
+        assert!(args.no_trash);
     }
 }
