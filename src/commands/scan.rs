@@ -1,5 +1,6 @@
 use crate::cli::ScanArgs;
 use crate::core::models::{DuplicateGroup, FileEntry, ScanResult, ScanSummary};
+use crate::output::export;
 use anyhow::{Context, Result};
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -141,8 +142,14 @@ pub fn run(args: ScanArgs) -> Result<()> {
         }
     }
 
-    if args.json.is_some() || args.csv.is_some() {
-        println!("note: --json/--csv export will be implemented in a later step.");
+    if let Some(json_path) = args.json.as_deref() {
+        export::write_json(json_path, &result)?;
+        println!("json report written to {}", json_path.display());
+    }
+
+    if let Some(csv_path) = args.csv.as_deref() {
+        export::write_csv(csv_path, &result)?;
+        println!("csv report written to {}", csv_path.display());
     }
 
     Ok(())
