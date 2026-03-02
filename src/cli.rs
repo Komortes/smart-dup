@@ -43,6 +43,10 @@ pub struct ScanArgs {
     #[arg(long, default_value_t = false)]
     pub no_default_ignores: bool,
 
+    /// Number of threads used for parallel hashing
+    #[arg(long, value_parser = parse_threads_arg)]
+    pub threads: Option<usize>,
+
     /// Export scan result to JSON file
     #[arg(long)]
     pub json: Option<PathBuf>,
@@ -132,9 +136,20 @@ fn parse_size_arg(value: &str) -> Result<u64, String> {
         .ok_or_else(|| format!("size '{value}' is too large"))
 }
 
+fn parse_threads_arg(value: &str) -> Result<usize, String> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| format!("invalid thread count '{value}': expected positive integer"))?;
+    if parsed == 0 {
+        return Err("invalid thread count '0': must be greater than 0".to_string());
+    }
+    Ok(parsed)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_size_arg;
+    use super::{Cli, Commands, parse_size_arg};
+    use clap::Parser;
 
     #[test]
     fn parse_size_accepts_plain_bytes() {
@@ -154,5 +169,20 @@ mod tests {
         assert!(parse_size_arg("").is_err());
         assert!(parse_size_arg("MB").is_err());
         assert!(parse_size_arg("10XB").is_err());
+    }
+
+    #[test]
+    fn parse_threads_accepts_positive_integer() {
+        let cli = Cli::try_parse_from(["smartdup", "scan", "/tmp", "--threads", "4"]).unwrap();
+        let Commands::Scan(args) = cli.command else {
+            panic!("expected scan command");
+        };
+        assert_eq!(args.threads, Some(4));
+    }
+
+    #[test]
+    fn parse_threads_rejects_zero() {
+        let parsed = Cli::try_parse_from(["smartdup", "scan", "/tmp", "--threads", "0"]);
+        assert!(parsed.is_err());
     }
 }

@@ -3,6 +3,7 @@ use crate::core::models::{DuplicateGroup, FileEntry, ScanResult, ScanSummary};
 use crate::output::export;
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
+use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
@@ -88,22 +89,7 @@ pub fn run(args: ScanArgs) -> Result<()> {
         .sum::<u64>();
 
     let hash_progress = make_hash_progress(candidate_files);
-    let mut groups = by_size
-        .into_par_iter()
-        .filter_map(|(size, files)| {
-            if files.len() < 2 {
-                return None;
-            }
-            Some(build_duplicate_groups_for_size(
-                size,
-                files,
-                hash_progress.clone(),
-            ))
-        })
-        .reduce(Vec::new, |mut acc, mut next| {
-            acc.append(&mut next);
-            acc
-        });
+    let mut groups = compute_duplicate_groups(by_size, hash_progress.clone(), args.threads)?;
     hash_progress.finish_and_clear();
 
     groups.sort_by(|a, b| {
@@ -140,6 +126,9 @@ pub fn run(args: ScanArgs) -> Result<()> {
     println!("size-candidate groups: {}", candidate_groups);
     println!("size-candidate files: {}", result.summary.candidate_files);
     println!("size-candidate bytes: {}", candidate_bytes);
+    if let Some(threads) = args.threads {
+        println!("hash threads: {}", threads);
+    }
     println!("duplicate groups: {}", result.summary.duplicate_groups);
     println!("duplicate files: {}", result.summary.duplicate_files);
     println!("reclaimable bytes: {}", result.summary.reclaimable_bytes);
@@ -233,6 +222,44 @@ fn build_duplicate_groups_for_size(
             })
         })
         .collect()
+}
+
+fn compute_duplicate_groups(
+    by_size: HashMap<u64, Vec<FileEntry>>,
+    hash_progress: ProgressBar,
+    threads: Option<usize>,
+) -> Result<Vec<DuplicateGroup>> {
+    if let Some(threads) = threads {
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .context("failed to initialize rayon thread pool for hashing")?;
+        Ok(pool.install(|| hash_duplicate_groups_parallel(by_size, hash_progress)))
+    } else {
+        Ok(hash_duplicate_groups_parallel(by_size, hash_progress))
+    }
+}
+
+fn hash_duplicate_groups_parallel(
+    by_size: HashMap<u64, Vec<FileEntry>>,
+    hash_progress: ProgressBar,
+) -> Vec<DuplicateGroup> {
+    by_size
+        .into_par_iter()
+        .filter_map(|(size, files)| {
+            if files.len() < 2 {
+                return None;
+            }
+            Some(build_duplicate_groups_for_size(
+                size,
+                files,
+                hash_progress.clone(),
+            ))
+        })
+        .reduce(Vec::new, |mut acc, mut next| {
+            acc.append(&mut next);
+            acc
+        })
 }
 
 fn hash_file_blake3(path: &Path) -> Result<String> {
