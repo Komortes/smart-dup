@@ -2,11 +2,13 @@ use crate::cli::ScanArgs;
 use crate::core::models::{DuplicateGroup, FileEntry, ScanResult, ScanSummary};
 use crate::output::export;
 use anyhow::{Context, Result};
+use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 use walkdir::{DirEntry, WalkDir};
 
@@ -16,8 +18,10 @@ pub fn run(args: ScanArgs) -> Result<()> {
     let mut scanned_files: u64 = 0;
     let mut by_size: HashMap<u64, Vec<FileEntry>> = HashMap::new();
     let ignore_rules = build_ignore_rules(&args.ignores, args.no_default_ignores);
+    let walk_progress = make_walk_progress();
 
     for root in &args.paths {
+        walk_progress.set_message(format!("walking {}", root.display()));
         let walker = WalkDir::new(root)
             .follow_links(args.follow_symlinks)
             .into_iter()
@@ -37,6 +41,7 @@ pub fn run(args: ScanArgs) -> Result<()> {
             }
 
             scanned_files += 1;
+            walk_progress.inc(1);
 
             let metadata = match entry.metadata() {
                 Ok(meta) => meta,
@@ -68,6 +73,7 @@ pub fn run(args: ScanArgs) -> Result<()> {
             by_size.entry(size).or_default().push(file_entry);
         }
     }
+    walk_progress.finish_and_clear();
 
     let candidate_files = by_size
         .values()
@@ -81,18 +87,24 @@ pub fn run(args: ScanArgs) -> Result<()> {
         .map(|(size, group)| size * group.len() as u64)
         .sum::<u64>();
 
+    let hash_progress = make_hash_progress(candidate_files);
     let mut groups = by_size
         .into_par_iter()
         .filter_map(|(size, files)| {
             if files.len() < 2 {
                 return None;
             }
-            Some(build_duplicate_groups_for_size(size, files))
+            Some(build_duplicate_groups_for_size(
+                size,
+                files,
+                hash_progress.clone(),
+            ))
         })
         .reduce(Vec::new, |mut acc, mut next| {
             acc.append(&mut next);
             acc
         });
+    hash_progress.finish_and_clear();
 
     groups.sort_by(|a, b| {
         b.file_size
@@ -188,7 +200,11 @@ fn build_ignore_rules(user_ignores: &[String], no_default_ignores: bool) -> Vec<
     rules
 }
 
-fn build_duplicate_groups_for_size(file_size: u64, files: Vec<FileEntry>) -> Vec<DuplicateGroup> {
+fn build_duplicate_groups_for_size(
+    file_size: u64,
+    files: Vec<FileEntry>,
+    hash_progress: ProgressBar,
+) -> Vec<DuplicateGroup> {
     let mut by_hash: HashMap<String, Vec<FileEntry>> = HashMap::new();
 
     for file in files {
@@ -199,6 +215,7 @@ fn build_duplicate_groups_for_size(file_size: u64, files: Vec<FileEntry>) -> Vec
                 file.path.as_path().display()
             ),
         }
+        hash_progress.inc(1);
     }
 
     by_hash
@@ -242,6 +259,31 @@ fn now_unix_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+fn make_walk_progress() -> ProgressBar {
+    let bar = ProgressBar::new_spinner();
+    bar.set_style(
+        ProgressStyle::with_template("{spinner:.green} {msg} ({pos} files)")
+            .unwrap_or_else(|_| ProgressStyle::default_spinner()),
+    );
+    bar.enable_steady_tick(Duration::from_millis(120));
+    bar
+}
+
+fn make_hash_progress(total: u64) -> ProgressBar {
+    if total == 0 {
+        return ProgressBar::hidden();
+    }
+
+    let bar = ProgressBar::new(total);
+    bar.set_style(
+        ProgressStyle::with_template(
+            "{spinner:.green} hashing [{bar:40.cyan/blue}] {pos}/{len} ({percent}%)",
+        )
+        .unwrap_or_else(|_| ProgressStyle::default_bar()),
+    );
+    bar
 }
 
 #[cfg(test)]
