@@ -191,3 +191,139 @@ fn confirm_group(plan: &DeletionPlan) -> Result<bool> {
     let answer = line.trim().to_ascii_lowercase();
     Ok(answer == "y" || answer == "yes")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{build_plan_for_group, choose_keep_index, run};
+    use crate::cli::{DeleteArgs, KeepRule};
+    use crate::core::models::{DuplicateGroup, FileEntry, ScanResult, ScanSummary};
+    use std::fs::{self, File};
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn choose_keep_index_by_oldest() {
+        let files = vec![
+            entry("/tmp/c.txt", Some(300)),
+            entry("/tmp/a.txt", Some(100)),
+            entry("/tmp/b.txt", Some(200)),
+        ];
+        assert_eq!(choose_keep_index(&files, KeepRule::Oldest), 1);
+    }
+
+    #[test]
+    fn choose_keep_index_by_newest() {
+        let files = vec![
+            entry("/tmp/c.txt", Some(300)),
+            entry("/tmp/a.txt", Some(100)),
+            entry("/tmp/b.txt", Some(200)),
+        ];
+        assert_eq!(choose_keep_index(&files, KeepRule::Newest), 0);
+    }
+
+    #[test]
+    fn choose_keep_index_by_lexicographic() {
+        let files = vec![
+            entry("/tmp/c.txt", Some(300)),
+            entry("/tmp/a.txt", Some(100)),
+            entry("/tmp/b.txt", Some(200)),
+        ];
+        assert_eq!(choose_keep_index(&files, KeepRule::Lexicographic), 1);
+    }
+
+    #[test]
+    fn build_plan_keeps_one_and_marks_rest_for_delete() {
+        let group = DuplicateGroup {
+            file_size: 42,
+            content_hash: "h".to_string(),
+            files: vec![
+                entry("/tmp/c.txt", Some(300)),
+                entry("/tmp/a.txt", Some(100)),
+                entry("/tmp/b.txt", Some(200)),
+            ],
+        };
+
+        let plan = build_plan_for_group(1, &group, KeepRule::Oldest).expect("plan should exist");
+        assert_eq!(plan.keep_file.path, PathBuf::from("/tmp/a.txt"));
+        assert_eq!(plan.delete_files.len(), 2);
+        assert_eq!(plan.file_size, 42);
+    }
+
+    #[test]
+    fn dry_run_does_not_delete_files() {
+        let tmp = make_temp_dir("dry-run");
+        let keep_path = tmp.join("keep.txt");
+        let dup_path = tmp.join("dup.txt");
+        let json_path = tmp.join("scan.json");
+
+        fs::write(&keep_path, b"same").expect("write keep file");
+        fs::write(&dup_path, b"same").expect("write dup file");
+
+        let report = ScanResult {
+            roots: vec![tmp.clone()],
+            generated_at_unix_secs: 0,
+            summary: ScanSummary {
+                scanned_files: 2,
+                candidate_files: 2,
+                duplicate_groups: 1,
+                duplicate_files: 2,
+                reclaimable_bytes: 4,
+            },
+            groups: vec![DuplicateGroup {
+                file_size: 4,
+                content_hash: "hash".to_string(),
+                files: vec![
+                    FileEntry {
+                        path: keep_path.clone(),
+                        size: 4,
+                        modified_unix_secs: Some(1),
+                    },
+                    FileEntry {
+                        path: dup_path.clone(),
+                        size: 4,
+                        modified_unix_secs: Some(2),
+                    },
+                ],
+            }],
+        };
+
+        let file = File::create(&json_path).expect("create json");
+        serde_json::to_writer(file, &report).expect("write json");
+
+        let args = DeleteArgs {
+            from_json: json_path,
+            dry_run: true,
+            interactive: false,
+            keep: KeepRule::Oldest,
+        };
+        run(args).expect("dry-run should succeed");
+
+        assert!(keep_path.exists());
+        assert!(dup_path.exists());
+
+        fs::remove_dir_all(&tmp).expect("cleanup temp dir");
+    }
+
+    fn entry(path: &str, modified_unix_secs: Option<u64>) -> FileEntry {
+        FileEntry {
+            path: PathBuf::from(path),
+            size: 1,
+            modified_unix_secs,
+        }
+    }
+
+    fn make_temp_dir(tag: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "smartdup-tests-{}-{}-{}",
+            tag,
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+}
