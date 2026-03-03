@@ -9,9 +9,12 @@ pub fn run(args: DeleteArgs) -> Result<()> {
     if !args.dry_run && !args.interactive {
         bail!("safe mode: use --dry-run or add --interactive for confirmed deletion");
     }
+    if matches!(args.keep, KeepRule::PathPriority) && args.prefer_path.is_empty() {
+        bail!("`--keep path-priority` requires at least one `--prefer-path <PATH>`");
+    }
 
     let scan_result = load_scan_result(&args.from_json)?;
-    let plans = build_plans(&scan_result, args.keep);
+    let plans = build_plans(&scan_result, args.keep, &args.prefer_path);
 
     if plans.is_empty() {
         println!("no duplicate groups available for deletion.");
@@ -32,6 +35,9 @@ pub fn run(args: DeleteArgs) -> Result<()> {
     println!("planned deletions: {} files", planned_files);
     println!("planned reclaimable: {} bytes", planned_bytes);
     println!("keep rule: {:?}", args.keep);
+    if matches!(args.keep, KeepRule::PathPriority) {
+        println!("preferred paths: {:?}", args.prefer_path);
+    }
     println!("dry_run: {}", args.dry_run);
     let use_trash = args.trash && !args.no_trash;
     println!("trash mode: {}", use_trash);
@@ -98,12 +104,16 @@ fn load_scan_result(path: &Path) -> Result<ScanResult> {
     serde_json::from_reader(reader).with_context(|| format!("invalid JSON: {}", path.display()))
 }
 
-fn build_plans(result: &ScanResult, keep_rule: KeepRule) -> Vec<DeletionPlan> {
+fn build_plans(
+    result: &ScanResult,
+    keep_rule: KeepRule,
+    prefer_paths: &[PathBuf],
+) -> Vec<DeletionPlan> {
     result
         .groups
         .iter()
         .enumerate()
-        .filter_map(|(idx, group)| build_plan_for_group(idx + 1, group, keep_rule))
+        .filter_map(|(idx, group)| build_plan_for_group(idx + 1, group, keep_rule, prefer_paths))
         .collect()
 }
 
@@ -111,12 +121,13 @@ fn build_plan_for_group(
     group_index: usize,
     group: &DuplicateGroup,
     keep_rule: KeepRule,
+    prefer_paths: &[PathBuf],
 ) -> Option<DeletionPlan> {
     if group.files.len() < 2 {
         return None;
     }
 
-    let keep_idx = choose_keep_index(&group.files, keep_rule);
+    let keep_idx = choose_keep_index(&group.files, keep_rule, prefer_paths);
     let keep_file = group.files[keep_idx].clone();
 
     let delete_files = group
@@ -145,14 +156,9 @@ fn build_plan_for_group(
     })
 }
 
-fn choose_keep_index(files: &[FileEntry], keep_rule: KeepRule) -> usize {
+fn choose_keep_index(files: &[FileEntry], keep_rule: KeepRule, prefer_paths: &[PathBuf]) -> usize {
     match keep_rule {
-        KeepRule::Lexicographic => files
-            .iter()
-            .enumerate()
-            .min_by(|(_, a), (_, b)| a.path.cmp(&b.path))
-            .map(|(idx, _)| idx)
-            .unwrap_or(0),
+        KeepRule::Lexicographic => choose_lexicographic_index(files),
         KeepRule::Oldest => files
             .iter()
             .enumerate()
@@ -165,7 +171,32 @@ fn choose_keep_index(files: &[FileEntry], keep_rule: KeepRule) -> usize {
             .max_by_key(|(_, file)| (file.modified_unix_secs.unwrap_or(0), &file.path))
             .map(|(idx, _)| idx)
             .unwrap_or(0),
+        KeepRule::PathPriority => choose_path_priority_index(files, prefer_paths)
+            .unwrap_or_else(|| choose_lexicographic_index(files)),
     }
+}
+
+fn choose_lexicographic_index(files: &[FileEntry]) -> usize {
+    files
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| a.path.cmp(&b.path))
+        .map(|(idx, _)| idx)
+        .unwrap_or(0)
+}
+
+fn choose_path_priority_index(files: &[FileEntry], prefer_paths: &[PathBuf]) -> Option<usize> {
+    files
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, file)| {
+            let priority = prefer_paths
+                .iter()
+                .position(|prefer| file.path.starts_with(prefer))?;
+            Some((priority, &file.path, idx))
+        })
+        .min_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)))
+        .map(|(_, _, idx)| idx)
 }
 
 fn print_group_plan(plan: &DeletionPlan) {
@@ -299,7 +330,7 @@ mod tests {
             entry("/tmp/a.txt", Some(100)),
             entry("/tmp/b.txt", Some(200)),
         ];
-        assert_eq!(choose_keep_index(&files, KeepRule::Oldest), 1);
+        assert_eq!(choose_keep_index(&files, KeepRule::Oldest, &[]), 1);
     }
 
     #[test]
@@ -309,7 +340,7 @@ mod tests {
             entry("/tmp/a.txt", Some(100)),
             entry("/tmp/b.txt", Some(200)),
         ];
-        assert_eq!(choose_keep_index(&files, KeepRule::Newest), 0);
+        assert_eq!(choose_keep_index(&files, KeepRule::Newest, &[]), 0);
     }
 
     #[test]
@@ -319,7 +350,38 @@ mod tests {
             entry("/tmp/a.txt", Some(100)),
             entry("/tmp/b.txt", Some(200)),
         ];
-        assert_eq!(choose_keep_index(&files, KeepRule::Lexicographic), 1);
+        assert_eq!(choose_keep_index(&files, KeepRule::Lexicographic, &[]), 1);
+    }
+
+    #[test]
+    fn choose_keep_index_by_path_priority() {
+        let files = vec![
+            entry("/Volumes/Archive/a.txt", Some(300)),
+            entry("/Users/me/Photos/b.txt", Some(100)),
+            entry("/Users/me/Downloads/c.txt", Some(200)),
+        ];
+        let prefer_paths = vec![
+            PathBuf::from("/Users/me/Photos"),
+            PathBuf::from("/Volumes/Archive"),
+        ];
+        assert_eq!(
+            choose_keep_index(&files, KeepRule::PathPriority, &prefer_paths),
+            1
+        );
+    }
+
+    #[test]
+    fn choose_keep_index_path_priority_falls_back_to_lexicographic() {
+        let files = vec![
+            entry("/tmp/c.txt", Some(300)),
+            entry("/tmp/a.txt", Some(100)),
+            entry("/tmp/b.txt", Some(200)),
+        ];
+        let prefer_paths = vec![PathBuf::from("/Users/me/Photos")];
+        assert_eq!(
+            choose_keep_index(&files, KeepRule::PathPriority, &prefer_paths),
+            1
+        );
     }
 
     #[test]
@@ -334,7 +396,8 @@ mod tests {
             ],
         };
 
-        let plan = build_plan_for_group(1, &group, KeepRule::Oldest).expect("plan should exist");
+        let plan =
+            build_plan_for_group(1, &group, KeepRule::Oldest, &[]).expect("plan should exist");
         assert_eq!(plan.keep_file.path, PathBuf::from("/tmp/a.txt"));
         assert_eq!(plan.delete_files.len(), 2);
         assert_eq!(plan.file_size, 42);
@@ -388,6 +451,7 @@ mod tests {
             trash: false,
             no_trash: true,
             keep: KeepRule::Oldest,
+            prefer_path: vec![],
         };
         run(args).expect("dry-run should succeed");
 

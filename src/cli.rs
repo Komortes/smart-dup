@@ -69,6 +69,7 @@ pub enum KeepRule {
     Oldest,
     Newest,
     Lexicographic,
+    PathPriority,
 }
 
 #[derive(Debug, Args)]
@@ -96,6 +97,10 @@ pub struct DeleteArgs {
     /// Rule for deciding which file to keep
     #[arg(long, value_enum, default_value_t = KeepRule::Oldest)]
     pub keep: KeepRule,
+
+    /// Preferred root path to keep when using `--keep path-priority` (can be repeated)
+    #[arg(long = "prefer-path")]
+    pub prefer_path: Vec<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -217,6 +222,29 @@ mod tests {
             panic!("expected delete command");
         };
         assert!(args.no_trash);
+    }
+
+    #[test]
+    fn parse_delete_path_priority_rule_and_prefer_paths() {
+        let cli = Cli::try_parse_from([
+            "smartdup",
+            "delete",
+            "--from",
+            "/tmp/report.json",
+            "--dry-run",
+            "--keep",
+            "path-priority",
+            "--prefer-path",
+            "/Users/me/Photos",
+            "--prefer-path",
+            "/Volumes/Archive",
+        ])
+        .unwrap();
+        let Commands::Delete(args) = cli.command else {
+            panic!("expected delete command");
+        };
+        assert!(matches!(args.keep, super::KeepRule::PathPriority));
+        assert_eq!(args.prefer_path.len(), 2);
     }
 
     #[test]
