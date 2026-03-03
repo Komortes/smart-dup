@@ -56,6 +56,12 @@ Scan multiple roots, skip small files, set hashing workers:
 cargo run -- scan ~/Downloads ~/Desktop --min-size 1MB --threads 4
 ```
 
+CI/script friendly output (no progress bars, summary only):
+
+```bash
+cargo run -- scan ~/data --no-progress --quiet
+```
+
 Custom ignore rules:
 
 ```bash

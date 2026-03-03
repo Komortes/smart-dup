@@ -19,10 +19,13 @@ pub fn run(args: ScanArgs) -> Result<()> {
     let mut scanned_files: u64 = 0;
     let mut by_size: HashMap<u64, Vec<FileEntry>> = HashMap::new();
     let ignore_rules = build_ignore_rules(&args.ignores, args.no_default_ignores);
-    let walk_progress = make_walk_progress();
+    let show_progress = !args.no_progress && !args.quiet;
+    let walk_progress = make_walk_progress(show_progress);
 
     for root in &args.paths {
-        walk_progress.set_message(format!("walking {}", root.display()));
+        if show_progress {
+            walk_progress.set_message(format!("walking {}", root.display()));
+        }
         let walker = WalkDir::new(root)
             .follow_links(args.follow_symlinks)
             .into_iter()
@@ -88,7 +91,7 @@ pub fn run(args: ScanArgs) -> Result<()> {
         .map(|(size, group)| size * group.len() as u64)
         .sum::<u64>();
 
-    let hash_progress = make_hash_progress(candidate_files);
+    let hash_progress = make_hash_progress(candidate_files, show_progress);
     let mut groups = compute_duplicate_groups(by_size, hash_progress.clone(), args.threads)?;
     hash_progress.finish_and_clear();
 
@@ -121,39 +124,53 @@ pub fn run(args: ScanArgs) -> Result<()> {
         groups,
     };
 
-    println!("scan roots: {:?}", result.roots);
-    println!("scanned files: {}", result.summary.scanned_files);
-    println!("size-candidate groups: {}", candidate_groups);
-    println!("size-candidate files: {}", result.summary.candidate_files);
-    println!("size-candidate bytes: {}", candidate_bytes);
-    if let Some(threads) = args.threads {
-        println!("hash threads: {}", threads);
-    }
-    println!("duplicate groups: {}", result.summary.duplicate_groups);
-    println!("duplicate files: {}", result.summary.duplicate_files);
-    println!("reclaimable bytes: {}", result.summary.reclaimable_bytes);
-
-    for (idx, group) in result.groups.iter().enumerate() {
+    if args.quiet {
         println!(
-            "\n[{}] size={} hash={} files={}",
-            idx + 1,
-            group.file_size,
-            group.content_hash,
-            group.files.len()
+            "scanned_files={} duplicate_groups={} duplicate_files={} reclaimable_bytes={}",
+            result.summary.scanned_files,
+            result.summary.duplicate_groups,
+            result.summary.duplicate_files,
+            result.summary.reclaimable_bytes
         );
-        for file in &group.files {
-            println!("  - {}", file.path.display());
+    } else {
+        println!("scan roots: {:?}", result.roots);
+        println!("scanned files: {}", result.summary.scanned_files);
+        println!("size-candidate groups: {}", candidate_groups);
+        println!("size-candidate files: {}", result.summary.candidate_files);
+        println!("size-candidate bytes: {}", candidate_bytes);
+        if let Some(threads) = args.threads {
+            println!("hash threads: {}", threads);
+        }
+        println!("duplicate groups: {}", result.summary.duplicate_groups);
+        println!("duplicate files: {}", result.summary.duplicate_files);
+        println!("reclaimable bytes: {}", result.summary.reclaimable_bytes);
+
+        for (idx, group) in result.groups.iter().enumerate() {
+            println!(
+                "\n[{}] size={} hash={} files={}",
+                idx + 1,
+                group.file_size,
+                group.content_hash,
+                group.files.len()
+            );
+            for file in &group.files {
+                println!("  - {}", file.path.display());
+            }
         }
     }
 
     if let Some(json_path) = args.json.as_deref() {
         export::write_json(json_path, &result)?;
-        println!("json report written to {}", json_path.display());
+        if !args.quiet {
+            println!("json report written to {}", json_path.display());
+        }
     }
 
     if let Some(csv_path) = args.csv.as_deref() {
         export::write_csv(csv_path, &result)?;
-        println!("csv report written to {}", csv_path.display());
+        if !args.quiet {
+            println!("csv report written to {}", csv_path.display());
+        }
     }
 
     Ok(())
@@ -288,7 +305,11 @@ fn now_unix_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn make_walk_progress() -> ProgressBar {
+fn make_walk_progress(enabled: bool) -> ProgressBar {
+    if !enabled {
+        return ProgressBar::hidden();
+    }
+
     let bar = ProgressBar::new_spinner();
     bar.set_style(
         ProgressStyle::with_template("{spinner:.green} {msg} ({pos} files)")
@@ -298,8 +319,8 @@ fn make_walk_progress() -> ProgressBar {
     bar
 }
 
-fn make_hash_progress(total: u64) -> ProgressBar {
-    if total == 0 {
+fn make_hash_progress(total: u64, enabled: bool) -> ProgressBar {
+    if total == 0 || !enabled {
         return ProgressBar::hidden();
     }
 

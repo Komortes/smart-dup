@@ -47,6 +47,14 @@ pub struct ScanArgs {
     #[arg(long, value_parser = parse_threads_arg)]
     pub threads: Option<usize>,
 
+    /// Disable progress indicators
+    #[arg(long, default_value_t = false)]
+    pub no_progress: bool,
+
+    /// Minimal output (summary only)
+    #[arg(long, default_value_t = false)]
+    pub quiet: bool,
+
     /// Export scan result to JSON file
     #[arg(long)]
     pub json: Option<PathBuf>,
@@ -209,5 +217,16 @@ mod tests {
             panic!("expected delete command");
         };
         assert!(args.no_trash);
+    }
+
+    #[test]
+    fn parse_scan_no_progress_and_quiet_flags() {
+        let cli =
+            Cli::try_parse_from(["smartdup", "scan", "/tmp", "--no-progress", "--quiet"]).unwrap();
+        let Commands::Scan(args) = cli.command else {
+            panic!("expected scan command");
+        };
+        assert!(args.no_progress);
+        assert!(args.quiet);
     }
 }
