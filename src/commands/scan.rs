@@ -133,23 +133,14 @@ pub fn run(args: ScanArgs) -> Result<()> {
             result.summary.reclaimable_bytes
         );
     } else {
-        println!("scan roots: {:?}", result.roots);
-        println!("scanned files: {}", result.summary.scanned_files);
-        println!("size-candidate groups: {}", candidate_groups);
-        println!("size-candidate files: {}", result.summary.candidate_files);
-        println!("size-candidate bytes: {}", candidate_bytes);
-        if let Some(threads) = args.threads {
-            println!("hash threads: {}", threads);
-        }
-        println!("duplicate groups: {}", result.summary.duplicate_groups);
-        println!("duplicate files: {}", result.summary.duplicate_files);
-        println!("reclaimable bytes: {}", result.summary.reclaimable_bytes);
+        print_scan_summary(&result, candidate_groups, candidate_bytes, args.threads);
 
         for (idx, group) in result.groups.iter().enumerate() {
             println!(
-                "\n[{}] size={} hash={} files={}",
+                "\n[{}] size={} ({}) hash={} files={}",
                 idx + 1,
                 group.file_size,
+                format_bytes(group.file_size),
                 group.content_hash,
                 group.files.len()
             );
@@ -305,6 +296,66 @@ fn now_unix_secs() -> u64 {
         .unwrap_or(0)
 }
 
+fn print_scan_summary(
+    result: &ScanResult,
+    candidate_groups: u64,
+    candidate_bytes: u64,
+    threads: Option<usize>,
+) {
+    println!("scan roots: {:?}", result.roots);
+    println!("\nsummary:");
+    println!("  scanned files        : {}", result.summary.scanned_files);
+    println!("  candidate groups     : {}", candidate_groups);
+    println!(
+        "  candidate files      : {}",
+        result.summary.candidate_files
+    );
+    println!(
+        "  candidate size       : {} ({})",
+        candidate_bytes,
+        format_bytes(candidate_bytes)
+    );
+    if let Some(threads) = threads {
+        println!("  hash threads         : {}", threads);
+    }
+    println!(
+        "  duplicate groups     : {}",
+        result.summary.duplicate_groups
+    );
+    println!(
+        "  duplicate files      : {}",
+        result.summary.duplicate_files
+    );
+    println!(
+        "  reclaimable size     : {} ({})",
+        result.summary.reclaimable_bytes,
+        format_bytes(result.summary.reclaimable_bytes)
+    );
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+
+    let mut value = bytes as f64;
+    let mut unit_index = 0usize;
+    while value >= 1024.0 && unit_index < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit_index += 1;
+    }
+
+    if value >= 100.0 {
+        format!("{value:.0} {}", UNITS[unit_index])
+    } else if value >= 10.0 {
+        format!("{value:.1} {}", UNITS[unit_index])
+    } else {
+        format!("{value:.2} {}", UNITS[unit_index])
+    }
+}
+
 fn make_walk_progress(enabled: bool) -> ProgressBar {
     if !enabled {
         return ProgressBar::hidden();
@@ -336,7 +387,7 @@ fn make_hash_progress(total: u64, enabled: bool) -> ProgressBar {
 
 #[cfg(test)]
 mod tests {
-    use super::build_ignore_rules;
+    use super::{build_ignore_rules, format_bytes};
 
     #[test]
     fn default_ignore_rules_are_enabled_by_default() {
@@ -351,5 +402,13 @@ mod tests {
     fn default_ignore_rules_can_be_disabled() {
         let rules = build_ignore_rules(&["custom".to_string()], true);
         assert_eq!(rules, vec!["custom".to_string()]);
+    }
+
+    #[test]
+    fn format_bytes_uses_binary_units() {
+        assert_eq!(format_bytes(999), "999 B");
+        assert_eq!(format_bytes(1024), "1.00 KiB");
+        assert_eq!(format_bytes(1024 * 1024), "1.00 MiB");
+        assert_eq!(format_bytes(5 * 1024 * 1024 * 1024), "5.00 GiB");
     }
 }
