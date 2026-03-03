@@ -14,7 +14,7 @@ It is built for real directories with large file counts and focuses on fast dupl
 - Exports duplicate groups to JSON and CSV
 - Supports safe delete workflow from JSON report
 - Requires explicit safe mode (`--dry-run` or `--interactive`)
-- Supports keep strategies: `oldest`, `newest`, `lexicographic`
+- Supports keep strategies: `oldest`, `newest`, `lexicographic`, `path-priority`
 - Supports macOS Trash-based deletion with fallback to direct delete
 
 ## Build & Run
@@ -97,6 +97,19 @@ Interactive delete:
 
 ```bash
 cargo run -- delete --from out.json --interactive --keep newest
+```
+
+Path-priority keep rule:
+
+```bash
+cargo run -- delete --from out.json --dry-run --keep path-priority \
+  --prefer-path ~/Photos --prefer-path /Volumes/Archive
+```
+
+Force Trash mode:
+
+```bash
+cargo run -- delete --from out.json --interactive --trash
 ```
 
 Force direct delete instead of Trash:

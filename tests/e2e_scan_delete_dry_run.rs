@@ -5,22 +5,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn scan_then_delete_dry_run_keeps_files() {
-    let tmp = make_temp_dir("e2e");
-    let root = tmp.join("data");
-    fs::create_dir_all(&root).expect("create data dir");
-
-    let dup_a = root.join("dup-a.txt");
-    let dup_b = root.join("dup-b.txt");
-    let unique = root.join("unique.txt");
-    let report = tmp.join("report.json");
-
-    fs::write(&dup_a, b"same-content").expect("write dup-a");
-    fs::write(&dup_b, b"same-content").expect("write dup-b");
-    fs::write(&unique, b"different").expect("write unique");
+    let fixture = create_basic_fixture("e2e");
+    let report = fixture.tmp.join("report.json");
 
     let scan = run_smartdup(&[
         "scan",
-        root.to_str().expect("utf-8 path"),
+        fixture.root.to_str().expect("utf-8 path"),
         "--min-size",
         "1B",
         "--no-default-ignores",
@@ -64,11 +54,123 @@ fn scan_then_delete_dry_run_keeps_files() {
         String::from_utf8_lossy(&delete.stderr)
     );
 
-    assert!(dup_a.exists(), "dry-run must not remove dup-a");
-    assert!(dup_b.exists(), "dry-run must not remove dup-b");
-    assert!(unique.exists(), "dry-run must not remove unique file");
+    assert!(fixture.dup_a.exists(), "dry-run must not remove dup-a");
+    assert!(fixture.dup_b.exists(), "dry-run must not remove dup-b");
+    assert!(
+        fixture.unique.exists(),
+        "dry-run must not remove unique file"
+    );
+
+    fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
+}
+
+#[test]
+fn delete_path_priority_picks_preferred_path_in_dry_run() {
+    let tmp = make_temp_dir("path-priority");
+    let preferred_dir = tmp.join("preferred");
+    let other_dir = tmp.join("other");
+    fs::create_dir_all(&preferred_dir).expect("create preferred dir");
+    fs::create_dir_all(&other_dir).expect("create other dir");
+
+    let preferred_file = preferred_dir.join("dup.txt");
+    let other_file = other_dir.join("dup.txt");
+    fs::write(&preferred_file, b"same-content").expect("write preferred dup");
+    fs::write(&other_file, b"same-content").expect("write other dup");
+
+    let report = tmp.join("report.json");
+    let scan = run_smartdup(&[
+        "scan",
+        tmp.to_str().expect("utf-8 path"),
+        "--min-size",
+        "1B",
+        "--no-default-ignores",
+        "--json",
+        report.to_str().expect("utf-8 path"),
+    ]);
+    assert!(
+        scan.status.success(),
+        "scan failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&scan.stdout),
+        String::from_utf8_lossy(&scan.stderr)
+    );
+
+    let delete = run_smartdup(&[
+        "delete",
+        "--from",
+        report.to_str().expect("utf-8 path"),
+        "--dry-run",
+        "--keep",
+        "path-priority",
+        "--prefer-path",
+        preferred_dir.to_str().expect("utf-8 path"),
+        "--no-trash",
+    ]);
+    assert!(
+        delete.status.success(),
+        "delete dry-run path-priority failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&delete.stdout),
+        String::from_utf8_lossy(&delete.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&delete.stdout);
+    assert!(
+        stdout.contains(&format!("keep:   {}", preferred_file.display())),
+        "expected preferred file to be selected as keep\nstdout:\n{}",
+        stdout
+    );
+
+    assert!(
+        preferred_file.exists(),
+        "dry-run must not remove preferred file"
+    );
+    assert!(
+        other_file.exists(),
+        "dry-run must not remove non-preferred file"
+    );
 
     fs::remove_dir_all(&tmp).expect("cleanup temp dir");
+}
+
+#[test]
+fn scan_quiet_no_progress_outputs_summary_only() {
+    let fixture = create_basic_fixture("quiet");
+
+    let scan = run_smartdup(&[
+        "scan",
+        fixture.root.to_str().expect("utf-8 path"),
+        "--min-size",
+        "1B",
+        "--no-default-ignores",
+        "--quiet",
+        "--no-progress",
+    ]);
+    assert!(
+        scan.status.success(),
+        "scan quiet/no-progress failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&scan.stdout),
+        String::from_utf8_lossy(&scan.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&scan.stdout);
+    assert!(
+        stdout.contains("scanned_files=")
+            && stdout.contains("duplicate_groups=")
+            && stdout.contains("reclaimable_bytes="),
+        "expected compact summary line, got:\n{}",
+        stdout
+    );
+    assert!(
+        !stdout.contains("hashing") && !stdout.contains("walking"),
+        "expected no progress output, got:\n{}",
+        stdout
+    );
+    assert!(
+        !stdout.contains("\n[1]"),
+        "expected no detailed duplicate groups in quiet mode, got:\n{}",
+        stdout
+    );
+
+    fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
 }
 
 fn run_smartdup(args: &[&str]) -> std::process::Output {
@@ -95,4 +197,33 @@ fn make_temp_dir(tag: &str) -> PathBuf {
     ));
     fs::create_dir_all(&dir).expect("create temp dir");
     dir
+}
+
+struct BasicFixture {
+    tmp: PathBuf,
+    root: PathBuf,
+    dup_a: PathBuf,
+    dup_b: PathBuf,
+    unique: PathBuf,
+}
+
+fn create_basic_fixture(tag: &str) -> BasicFixture {
+    let tmp = make_temp_dir(tag);
+    let root = tmp.join("data");
+    fs::create_dir_all(&root).expect("create data dir");
+
+    let dup_a = root.join("dup-a.txt");
+    let dup_b = root.join("dup-b.txt");
+    let unique = root.join("unique.txt");
+    fs::write(&dup_a, b"same-content").expect("write dup-a");
+    fs::write(&dup_b, b"same-content").expect("write dup-b");
+    fs::write(&unique, b"different").expect("write unique");
+
+    BasicFixture {
+        tmp,
+        root,
+        dup_a,
+        dup_b,
+        unique,
+    }
 }
