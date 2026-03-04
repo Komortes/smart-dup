@@ -237,11 +237,11 @@ fn delete_file_safely(path: &Path, prefer_trash: bool) -> Result<()> {
                 fs::remove_file(path)
                     .with_context(|| format!("remove failed for {}", path.display()))?;
             }
-            return Ok(());
+            Ok(())
         } else {
             fs::remove_file(path)
                 .with_context(|| format!("remove failed for {}", path.display()))?;
-            return Ok(());
+            Ok(())
         }
     }
 

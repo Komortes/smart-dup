@@ -123,17 +123,13 @@ pub fn run(args: ScanArgs) -> Result<()> {
         },
         groups,
     };
+    let summary_line = format_summary_line(&result.summary);
 
     if args.quiet {
-        println!(
-            "scanned_files={} duplicate_groups={} duplicate_files={} reclaimable_bytes={}",
-            result.summary.scanned_files,
-            result.summary.duplicate_groups,
-            result.summary.duplicate_files,
-            result.summary.reclaimable_bytes
-        );
+        println!("{summary_line}");
     } else {
         print_scan_summary(&result, candidate_groups, candidate_bytes, args.threads);
+        println!("summary: {summary_line}");
 
         for (idx, group) in result.groups.iter().enumerate() {
             println!(
@@ -333,6 +329,16 @@ fn print_scan_summary(
     );
 }
 
+fn format_summary_line(summary: &ScanSummary) -> String {
+    format!(
+        "scanned_files={} duplicate_groups={} duplicate_files={} reclaimable_bytes={}",
+        summary.scanned_files,
+        summary.duplicate_groups,
+        summary.duplicate_files,
+        summary.reclaimable_bytes
+    )
+}
+
 fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
 
@@ -387,7 +393,7 @@ fn make_hash_progress(total: u64, enabled: bool) -> ProgressBar {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_ignore_rules, format_bytes};
+    use super::{ScanSummary, build_ignore_rules, format_bytes, format_summary_line};
 
     #[test]
     fn default_ignore_rules_are_enabled_by_default() {
@@ -410,5 +416,20 @@ mod tests {
         assert_eq!(format_bytes(1024), "1.00 KiB");
         assert_eq!(format_bytes(1024 * 1024), "1.00 MiB");
         assert_eq!(format_bytes(5 * 1024 * 1024 * 1024), "5.00 GiB");
+    }
+
+    #[test]
+    fn summary_line_has_stable_key_value_format() {
+        let line = format_summary_line(&ScanSummary {
+            scanned_files: 10,
+            candidate_files: 4,
+            duplicate_groups: 2,
+            duplicate_files: 4,
+            reclaimable_bytes: 1234,
+        });
+        assert_eq!(
+            line,
+            "scanned_files=10 duplicate_groups=2 duplicate_files=4 reclaimable_bytes=1234"
+        );
     }
 }
