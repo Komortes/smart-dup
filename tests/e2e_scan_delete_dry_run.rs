@@ -173,6 +173,52 @@ fn scan_quiet_no_progress_outputs_summary_only() {
     fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
 }
 
+#[test]
+fn delete_path_priority_requires_prefer_path_argument() {
+    let fixture = create_basic_fixture("path-priority-missing-arg");
+    let report = fixture.tmp.join("report.json");
+
+    let scan = run_smartdup(&[
+        "scan",
+        fixture.root.to_str().expect("utf-8 path"),
+        "--min-size",
+        "1B",
+        "--no-default-ignores",
+        "--json",
+        report.to_str().expect("utf-8 path"),
+    ]);
+    assert!(
+        scan.status.success(),
+        "scan failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&scan.stdout),
+        String::from_utf8_lossy(&scan.stderr)
+    );
+
+    let delete = run_smartdup(&[
+        "delete",
+        "--from",
+        report.to_str().expect("utf-8 path"),
+        "--dry-run",
+        "--keep",
+        "path-priority",
+    ]);
+    assert!(
+        !delete.status.success(),
+        "delete should fail without --prefer-path\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&delete.stdout),
+        String::from_utf8_lossy(&delete.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&delete.stderr);
+    assert!(
+        stderr.contains("requires at least one `--prefer-path <PATH>`"),
+        "expected validation error message, got:\n{}",
+        stderr
+    );
+
+    fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
+}
+
 fn run_smartdup(args: &[&str]) -> std::process::Output {
     Command::new("cargo")
         .arg("run")
