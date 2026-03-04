@@ -482,6 +482,58 @@ fn delete_yes_removes_one_duplicate_without_prompt() {
     fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
 }
 
+#[test]
+fn delete_max_delete_limit_blocks_real_deletion() {
+    let fixture = create_basic_fixture("delete-max-delete");
+    let report = fixture.tmp.join("report.json");
+
+    let scan = run_smartdup(&[
+        "scan",
+        fixture.root.to_str().expect("utf-8 path"),
+        "--min-size",
+        "1B",
+        "--no-default-ignores",
+        "--json",
+        report.to_str().expect("utf-8 path"),
+    ]);
+    assert!(
+        scan.status.success(),
+        "scan failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&scan.stdout),
+        String::from_utf8_lossy(&scan.stderr)
+    );
+
+    let delete = run_smartdup(&[
+        "delete",
+        "--from",
+        report.to_str().expect("utf-8 path"),
+        "--yes",
+        "--max-delete",
+        "0",
+        "--no-trash",
+    ]);
+    assert!(
+        !delete.status.success(),
+        "delete should fail when planned files exceed --max-delete\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&delete.stdout),
+        String::from_utf8_lossy(&delete.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&delete.stderr);
+    assert!(
+        stderr.contains("safety limit exceeded"),
+        "expected safety limit error, got:\n{}",
+        stderr
+    );
+
+    assert!(
+        fixture.dup_a.exists() && fixture.dup_b.exists() && fixture.unique.exists(),
+        "all files must remain when limit blocks deletion"
+    );
+
+    fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
+}
+
 fn run_smartdup(args: &[&str]) -> std::process::Output {
     Command::new("cargo")
         .arg("run")

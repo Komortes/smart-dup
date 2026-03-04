@@ -29,6 +29,16 @@ pub fn run(args: DeleteArgs) -> Result<()> {
         .iter()
         .map(|p| p.file_size * p.delete_files.len() as u64)
         .sum::<u64>();
+    if !args.dry_run
+        && let Some(limit) = args.max_delete
+        && planned_files > limit
+    {
+        bail!(
+            "safety limit exceeded: planned deletions {} > --max-delete {}",
+            planned_files,
+            limit
+        );
+    }
 
     let use_trash = args.trash && !args.no_trash;
     let verify_hash = !args.no_verify_hash;
@@ -43,6 +53,9 @@ pub fn run(args: DeleteArgs) -> Result<()> {
         }
         println!("dry_run: {}", args.dry_run);
         println!("assume yes: {}", args.yes);
+        if let Some(limit) = args.max_delete {
+            println!("max delete: {}", limit);
+        }
         println!("trash mode: {}", use_trash);
         println!("verify hash: {}", verify_hash);
     }
@@ -559,6 +572,7 @@ mod tests {
             trash: false,
             no_trash: true,
             no_verify_hash: false,
+            max_delete: None,
             keep: KeepRule::Oldest,
             prefer_path: vec![],
         };

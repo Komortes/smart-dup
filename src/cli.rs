@@ -106,6 +106,10 @@ pub struct DeleteArgs {
     #[arg(long = "no-verify-hash", default_value_t = false)]
     pub no_verify_hash: bool,
 
+    /// Safety limit: maximum planned files to delete in one run
+    #[arg(long = "max-delete")]
+    pub max_delete: Option<u64>,
+
     /// Rule for deciding which file to keep
     #[arg(long, value_enum, default_value_t = KeepRule::Oldest)]
     pub keep: KeepRule,
@@ -279,6 +283,24 @@ mod tests {
             panic!("expected delete command");
         };
         assert!(args.yes);
+    }
+
+    #[test]
+    fn parse_delete_max_delete_flag() {
+        let cli = Cli::try_parse_from([
+            "smartdup",
+            "delete",
+            "--from",
+            "/tmp/report.json",
+            "--dry-run",
+            "--max-delete",
+            "10",
+        ])
+        .unwrap();
+        let Commands::Delete(args) = cli.command else {
+            panic!("expected delete command");
+        };
+        assert_eq!(args.max_delete, Some(10));
     }
 
     #[test]

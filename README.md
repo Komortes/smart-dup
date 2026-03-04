@@ -137,6 +137,12 @@ Skip hash verification (faster, less safe):
 cargo run -- delete --from out.json --interactive --no-verify-hash
 ```
 
+Hard safety cap on real deletions:
+
+```bash
+cargo run -- delete --from out.json --yes --max-delete 100
+```
+
 Safety rule:
 
 - If you do **not** pass `--dry-run`, you must pass `--interactive`.
