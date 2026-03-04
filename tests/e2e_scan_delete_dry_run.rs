@@ -1,6 +1,7 @@
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
@@ -219,6 +220,106 @@ fn delete_path_priority_requires_prefer_path_argument() {
     fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
 }
 
+#[test]
+fn interactive_delete_decline_keeps_files() {
+    let fixture = create_basic_fixture("interactive-decline");
+    let report = fixture.tmp.join("report.json");
+
+    let scan = run_smartdup(&[
+        "scan",
+        fixture.root.to_str().expect("utf-8 path"),
+        "--min-size",
+        "1B",
+        "--no-default-ignores",
+        "--json",
+        report.to_str().expect("utf-8 path"),
+    ]);
+    assert!(
+        scan.status.success(),
+        "scan failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&scan.stdout),
+        String::from_utf8_lossy(&scan.stderr)
+    );
+
+    let delete = run_smartdup_with_stdin(
+        &[
+            "delete",
+            "--from",
+            report.to_str().expect("utf-8 path"),
+            "--interactive",
+            "--keep",
+            "oldest",
+            "--no-trash",
+        ],
+        "n\n",
+    );
+    assert!(
+        delete.status.success(),
+        "interactive delete (decline) failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&delete.stdout),
+        String::from_utf8_lossy(&delete.stderr)
+    );
+
+    assert!(fixture.dup_a.exists(), "declined delete must keep dup-a");
+    assert!(fixture.dup_b.exists(), "declined delete must keep dup-b");
+    assert!(fixture.unique.exists(), "declined delete must keep unique");
+
+    fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
+}
+
+#[test]
+fn interactive_delete_confirm_removes_one_duplicate() {
+    let fixture = create_basic_fixture("interactive-confirm");
+    let report = fixture.tmp.join("report.json");
+
+    let scan = run_smartdup(&[
+        "scan",
+        fixture.root.to_str().expect("utf-8 path"),
+        "--min-size",
+        "1B",
+        "--no-default-ignores",
+        "--json",
+        report.to_str().expect("utf-8 path"),
+    ]);
+    assert!(
+        scan.status.success(),
+        "scan failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&scan.stdout),
+        String::from_utf8_lossy(&scan.stderr)
+    );
+
+    let delete = run_smartdup_with_stdin(
+        &[
+            "delete",
+            "--from",
+            report.to_str().expect("utf-8 path"),
+            "--interactive",
+            "--keep",
+            "oldest",
+            "--no-trash",
+        ],
+        "y\n",
+    );
+    assert!(
+        delete.status.success(),
+        "interactive delete (confirm) failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&delete.stdout),
+        String::from_utf8_lossy(&delete.stderr)
+    );
+
+    let remaining_dups = fixture.dup_a.exists() as u8 + fixture.dup_b.exists() as u8;
+    assert_eq!(
+        remaining_dups, 1,
+        "expected exactly one duplicate file to remain after confirmed delete"
+    );
+    assert!(
+        fixture.unique.exists(),
+        "confirmed delete must not remove non-duplicate file"
+    );
+
+    fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
+}
+
 fn run_smartdup(args: &[&str]) -> std::process::Output {
     Command::new("cargo")
         .arg("run")
@@ -228,6 +329,30 @@ fn run_smartdup(args: &[&str]) -> std::process::Output {
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .expect("run smartdup command")
+}
+
+fn run_smartdup_with_stdin(args: &[&str], input: &str) -> std::process::Output {
+    let mut child = Command::new("cargo")
+        .arg("run")
+        .arg("--quiet")
+        .arg("--")
+        .args(args)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn smartdup command");
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(input.as_bytes())
+            .expect("write stdin to smartdup");
+    } else {
+        panic!("failed to open stdin for smartdup process");
+    }
+
+    child.wait_with_output().expect("wait for smartdup output")
 }
 
 fn make_temp_dir(tag: &str) -> PathBuf {
