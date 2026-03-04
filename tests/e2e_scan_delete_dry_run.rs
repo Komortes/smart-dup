@@ -432,6 +432,56 @@ fn interactive_delete_skips_when_file_hash_changed_after_scan() {
     fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
 }
 
+#[test]
+fn delete_yes_removes_one_duplicate_without_prompt() {
+    let fixture = create_basic_fixture("delete-yes");
+    let report = fixture.tmp.join("report.json");
+
+    let scan = run_smartdup(&[
+        "scan",
+        fixture.root.to_str().expect("utf-8 path"),
+        "--min-size",
+        "1B",
+        "--no-default-ignores",
+        "--json",
+        report.to_str().expect("utf-8 path"),
+    ]);
+    assert!(
+        scan.status.success(),
+        "scan failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&scan.stdout),
+        String::from_utf8_lossy(&scan.stderr)
+    );
+
+    let delete = run_smartdup(&[
+        "delete",
+        "--from",
+        report.to_str().expect("utf-8 path"),
+        "--yes",
+        "--keep",
+        "oldest",
+        "--no-trash",
+    ]);
+    assert!(
+        delete.status.success(),
+        "delete --yes failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&delete.stdout),
+        String::from_utf8_lossy(&delete.stderr)
+    );
+
+    let remaining_dups = fixture.dup_a.exists() as u8 + fixture.dup_b.exists() as u8;
+    assert_eq!(
+        remaining_dups, 1,
+        "expected exactly one duplicate file to remain after --yes delete"
+    );
+    assert!(
+        fixture.unique.exists(),
+        "delete --yes must not remove non-duplicate file"
+    );
+
+    fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
+}
+
 fn run_smartdup(args: &[&str]) -> std::process::Output {
     Command::new("cargo")
         .arg("run")

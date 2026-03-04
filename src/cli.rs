@@ -86,6 +86,10 @@ pub struct DeleteArgs {
     #[arg(long, default_value_t = false)]
     pub interactive: bool,
 
+    /// Confirm all deletions without per-group prompt
+    #[arg(long, default_value_t = false)]
+    pub yes: bool,
+
     /// Minimal output (summary only)
     #[arg(long, default_value_t = false)]
     pub quiet: bool,
@@ -264,6 +268,17 @@ mod tests {
             panic!("expected delete command");
         };
         assert!(args.no_verify_hash);
+    }
+
+    #[test]
+    fn parse_delete_yes_flag() {
+        let cli =
+            Cli::try_parse_from(["smartdup", "delete", "--from", "/tmp/report.json", "--yes"])
+                .unwrap();
+        let Commands::Delete(args) = cli.command else {
+            panic!("expected delete command");
+        };
+        assert!(args.yes);
     }
 
     #[test]

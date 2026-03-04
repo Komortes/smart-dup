@@ -6,8 +6,8 @@ use std::io::{BufReader, Read, Write, stdin, stdout};
 use std::path::{Path, PathBuf};
 
 pub fn run(args: DeleteArgs) -> Result<()> {
-    if !args.dry_run && !args.interactive {
-        bail!("safe mode: use --dry-run or add --interactive for confirmed deletion");
+    if !args.dry_run && !args.interactive && !args.yes {
+        bail!("safe mode: use --dry-run, or pass --interactive, or --yes");
     }
     if matches!(args.keep, KeepRule::PathPriority) && args.prefer_path.is_empty() {
         bail!("`--keep path-priority` requires at least one `--prefer-path <PATH>`");
@@ -42,6 +42,7 @@ pub fn run(args: DeleteArgs) -> Result<()> {
             println!("preferred paths: {:?}", args.prefer_path);
         }
         println!("dry_run: {}", args.dry_run);
+        println!("assume yes: {}", args.yes);
         println!("trash mode: {}", use_trash);
         println!("verify hash: {}", verify_hash);
     }
@@ -61,7 +62,7 @@ pub fn run(args: DeleteArgs) -> Result<()> {
             continue;
         }
 
-        let confirmed = confirm_group(plan)?;
+        let confirmed = if args.yes { true } else { confirm_group(plan)? };
         if !confirmed {
             skipped_groups += 1;
             if !args.quiet {
@@ -553,6 +554,7 @@ mod tests {
             from_json: json_path,
             dry_run: true,
             interactive: false,
+            yes: false,
             quiet: false,
             trash: false,
             no_trash: true,

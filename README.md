@@ -106,6 +106,12 @@ Interactive delete:
 cargo run -- delete --from out.json --interactive --keep newest
 ```
 
+Non-interactive confirmed delete:
+
+```bash
+cargo run -- delete --from out.json --yes --keep newest
+```
+
 Path-priority keep rule:
 
 ```bash
