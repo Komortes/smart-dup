@@ -275,6 +275,7 @@ fn move_to_macos_trash(path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 fn unique_destination_in_dir(dir: &Path, file_name: &std::ffi::OsStr) -> PathBuf {
     let first = dir.join(file_name);
     if !first.exists() {
@@ -298,6 +299,7 @@ fn unique_destination_in_dir(dir: &Path, file_name: &std::ffi::OsStr) -> PathBuf
     unreachable!("infinite loop should always return with a free file name")
 }
 
+#[cfg(target_os = "macos")]
 fn split_name_and_ext(name: &str) -> (&str, &str) {
     if name.starts_with('.') && !name[1..].contains('.') {
         return (name, "");
@@ -313,14 +315,13 @@ fn split_name_and_ext(name: &str) -> (&str, &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        build_plan_for_group, choose_keep_index, delete_file_safely, run, split_name_and_ext,
-        unique_destination_in_dir,
-    };
+    use super::{build_plan_for_group, choose_keep_index, delete_file_safely, run};
+    #[cfg(target_os = "macos")]
+    use super::{split_name_and_ext, unique_destination_in_dir};
     use crate::cli::{DeleteArgs, KeepRule};
     use crate::core::models::{DuplicateGroup, FileEntry, ScanResult, ScanSummary};
     use std::fs::{self, File};
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -461,6 +462,7 @@ mod tests {
         fs::remove_dir_all(&tmp).expect("cleanup temp dir");
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn split_name_and_ext_works_for_common_cases() {
         assert_eq!(split_name_and_ext("photo.jpg"), ("photo", "jpg"));
@@ -469,13 +471,14 @@ mod tests {
         assert_eq!(split_name_and_ext("README"), ("README", ""));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn unique_destination_adds_suffix_when_target_exists() {
         let tmp = make_temp_dir("trash-name");
         let first = tmp.join("dup.jpg");
         File::create(&first).expect("create first file");
 
-        let chosen = unique_destination_in_dir(&tmp, Path::new("dup.jpg").as_os_str());
+        let chosen = unique_destination_in_dir(&tmp, std::path::Path::new("dup.jpg").as_os_str());
         assert_eq!(chosen, tmp.join("dup (1).jpg"));
 
         fs::remove_dir_all(&tmp).expect("cleanup temp dir");
