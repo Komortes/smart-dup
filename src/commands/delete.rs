@@ -30,17 +30,19 @@ pub fn run(args: DeleteArgs) -> Result<()> {
         .map(|p| p.file_size * p.delete_files.len() as u64)
         .sum::<u64>();
 
-    println!("loaded groups: {}", scan_result.groups.len());
-    println!("planned groups: {}", plans.len());
-    println!("planned deletions: {} files", planned_files);
-    println!("planned reclaimable: {} bytes", planned_bytes);
-    println!("keep rule: {:?}", args.keep);
-    if matches!(args.keep, KeepRule::PathPriority) {
-        println!("preferred paths: {:?}", args.prefer_path);
-    }
-    println!("dry_run: {}", args.dry_run);
     let use_trash = args.trash && !args.no_trash;
-    println!("trash mode: {}", use_trash);
+    if !args.quiet {
+        println!("loaded groups: {}", scan_result.groups.len());
+        println!("planned groups: {}", plans.len());
+        println!("planned deletions: {} files", planned_files);
+        println!("planned reclaimable: {} bytes", planned_bytes);
+        println!("keep rule: {:?}", args.keep);
+        if matches!(args.keep, KeepRule::PathPriority) {
+            println!("preferred paths: {:?}", args.prefer_path);
+        }
+        println!("dry_run: {}", args.dry_run);
+        println!("trash mode: {}", use_trash);
+    }
 
     let mut deleted_files = 0_u64;
     let mut failed_files = 0_u64;
@@ -48,7 +50,9 @@ pub fn run(args: DeleteArgs) -> Result<()> {
     let mut skipped_groups = 0_u64;
 
     for plan in &plans {
-        print_group_plan(plan);
+        if !args.quiet {
+            print_group_plan(plan);
+        }
 
         if args.dry_run {
             continue;
@@ -57,7 +61,9 @@ pub fn run(args: DeleteArgs) -> Result<()> {
         let confirmed = confirm_group(plan)?;
         if !confirmed {
             skipped_groups += 1;
-            println!("  skipped");
+            if !args.quiet {
+                println!("  skipped");
+            }
             continue;
         }
 
@@ -66,7 +72,9 @@ pub fn run(args: DeleteArgs) -> Result<()> {
                 Ok(_) => {
                     deleted_files += 1;
                     reclaimed_bytes += plan.file_size;
-                    println!("  removed: {}", file.path.display());
+                    if !args.quiet {
+                        println!("  removed: {}", file.path.display());
+                    }
                 }
                 Err(err) => {
                     failed_files += 1;
@@ -76,17 +84,59 @@ pub fn run(args: DeleteArgs) -> Result<()> {
         }
     }
 
-    if args.dry_run {
-        println!("\ndry-run complete. no files were deleted.");
+    if args.quiet {
+        println!(
+            "{}",
+            format_delete_summary_line(DeleteSummary {
+                planned_groups: plans.len() as u64,
+                planned_files,
+                planned_bytes,
+                deleted_files,
+                failed_files,
+                skipped_groups,
+                reclaimed_bytes,
+                dry_run: args.dry_run,
+            })
+        );
     } else {
-        println!("\ninteractive delete complete.");
+        if args.dry_run {
+            println!("\ndry-run complete. no files were deleted.");
+        } else {
+            println!("\ninteractive delete complete.");
+        }
+        println!("deleted files: {}", deleted_files);
+        println!("failed deletions: {}", failed_files);
+        println!("skipped groups: {}", skipped_groups);
+        println!("reclaimed bytes (actual): {}", reclaimed_bytes);
     }
-    println!("deleted files: {}", deleted_files);
-    println!("failed deletions: {}", failed_files);
-    println!("skipped groups: {}", skipped_groups);
-    println!("reclaimed bytes (actual): {}", reclaimed_bytes);
 
     Ok(())
+}
+
+#[derive(Debug)]
+struct DeleteSummary {
+    planned_groups: u64,
+    planned_files: u64,
+    planned_bytes: u64,
+    deleted_files: u64,
+    failed_files: u64,
+    skipped_groups: u64,
+    reclaimed_bytes: u64,
+    dry_run: bool,
+}
+
+fn format_delete_summary_line(summary: DeleteSummary) -> String {
+    format!(
+        "planned_groups={} planned_files={} planned_bytes={} deleted_files={} failed_files={} skipped_groups={} reclaimed_bytes={} dry_run={}",
+        summary.planned_groups,
+        summary.planned_files,
+        summary.planned_bytes,
+        summary.deleted_files,
+        summary.failed_files,
+        summary.skipped_groups,
+        summary.reclaimed_bytes,
+        summary.dry_run
+    )
 }
 
 #[derive(Debug)]
@@ -315,6 +365,7 @@ fn split_name_and_ext(name: &str) -> (&str, &str) {
 
 #[cfg(test)]
 mod tests {
+    use super::{DeleteSummary, format_delete_summary_line};
     use super::{build_plan_for_group, choose_keep_index, delete_file_safely, run};
     #[cfg(target_os = "macos")]
     use super::{split_name_and_ext, unique_destination_in_dir};
@@ -449,6 +500,7 @@ mod tests {
             from_json: json_path,
             dry_run: true,
             interactive: false,
+            quiet: false,
             trash: false,
             no_trash: true,
             keep: KeepRule::Oldest,
@@ -494,6 +546,24 @@ mod tests {
         assert!(!file_path.exists());
 
         fs::remove_dir_all(&tmp).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn delete_summary_line_has_stable_key_value_format() {
+        let line = format_delete_summary_line(DeleteSummary {
+            planned_groups: 2,
+            planned_files: 5,
+            planned_bytes: 1000,
+            deleted_files: 3,
+            failed_files: 1,
+            skipped_groups: 1,
+            reclaimed_bytes: 700,
+            dry_run: false,
+        });
+        assert_eq!(
+            line,
+            "planned_groups=2 planned_files=5 planned_bytes=1000 deleted_files=3 failed_files=1 skipped_groups=1 reclaimed_bytes=700 dry_run=false"
+        );
     }
 
     fn entry(path: &str, modified_unix_secs: Option<u64>) -> FileEntry {

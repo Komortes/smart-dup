@@ -221,6 +221,59 @@ fn delete_path_priority_requires_prefer_path_argument() {
 }
 
 #[test]
+fn delete_quiet_dry_run_outputs_summary_only() {
+    let fixture = create_basic_fixture("delete-quiet");
+    let report = fixture.tmp.join("report.json");
+
+    let scan = run_smartdup(&[
+        "scan",
+        fixture.root.to_str().expect("utf-8 path"),
+        "--min-size",
+        "1B",
+        "--no-default-ignores",
+        "--json",
+        report.to_str().expect("utf-8 path"),
+    ]);
+    assert!(
+        scan.status.success(),
+        "scan failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&scan.stdout),
+        String::from_utf8_lossy(&scan.stderr)
+    );
+
+    let delete = run_smartdup(&[
+        "delete",
+        "--from",
+        report.to_str().expect("utf-8 path"),
+        "--dry-run",
+        "--quiet",
+        "--no-trash",
+    ]);
+    assert!(
+        delete.status.success(),
+        "delete quiet dry-run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&delete.stdout),
+        String::from_utf8_lossy(&delete.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&delete.stdout);
+    assert!(
+        stdout.contains("planned_groups=")
+            && stdout.contains("planned_files=")
+            && stdout.contains("dry_run=true"),
+        "expected compact delete summary line, got:\n{}",
+        stdout
+    );
+    assert!(
+        !stdout.contains("[group ") && !stdout.contains("keep:"),
+        "expected no detailed group output in quiet mode, got:\n{}",
+        stdout
+    );
+
+    fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
+}
+
+#[test]
 fn interactive_delete_decline_keeps_files() {
     let fixture = create_basic_fixture("interactive-decline");
     let report = fixture.tmp.join("report.json");

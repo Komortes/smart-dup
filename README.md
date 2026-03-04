@@ -93,6 +93,12 @@ Preview only (no file changes):
 cargo run -- delete --from out.json --dry-run --keep oldest
 ```
 
+Script-friendly summary output:
+
+```bash
+cargo run -- delete --from out.json --dry-run --quiet
+```
+
 Interactive delete:
 
 ```bash

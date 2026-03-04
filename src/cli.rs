@@ -86,6 +86,10 @@ pub struct DeleteArgs {
     #[arg(long, default_value_t = false)]
     pub interactive: bool,
 
+    /// Minimal output (summary only)
+    #[arg(long, default_value_t = false)]
+    pub quiet: bool,
+
     /// Try moving files to Trash before direct delete (default: true on macOS)
     #[arg(long, default_value_t = cfg!(target_os = "macos"))]
     pub trash: bool,
@@ -222,6 +226,23 @@ mod tests {
             panic!("expected delete command");
         };
         assert!(args.no_trash);
+    }
+
+    #[test]
+    fn parse_delete_quiet_flag() {
+        let cli = Cli::try_parse_from([
+            "smartdup",
+            "delete",
+            "--from",
+            "/tmp/report.json",
+            "--dry-run",
+            "--quiet",
+        ])
+        .unwrap();
+        let Commands::Delete(args) = cli.command else {
+            panic!("expected delete command");
+        };
+        assert!(args.quiet);
     }
 
     #[test]
