@@ -98,6 +98,10 @@ pub struct DeleteArgs {
     #[arg(long = "no-trash", default_value_t = false)]
     pub no_trash: bool,
 
+    /// Disable hash verification before deleting files
+    #[arg(long = "no-verify-hash", default_value_t = false)]
+    pub no_verify_hash: bool,
+
     /// Rule for deciding which file to keep
     #[arg(long, value_enum, default_value_t = KeepRule::Oldest)]
     pub keep: KeepRule,
@@ -243,6 +247,23 @@ mod tests {
             panic!("expected delete command");
         };
         assert!(args.quiet);
+    }
+
+    #[test]
+    fn parse_delete_no_verify_hash_flag() {
+        let cli = Cli::try_parse_from([
+            "smartdup",
+            "delete",
+            "--from",
+            "/tmp/report.json",
+            "--dry-run",
+            "--no-verify-hash",
+        ])
+        .unwrap();
+        let Commands::Delete(args) = cli.command else {
+            panic!("expected delete command");
+        };
+        assert!(args.no_verify_hash);
     }
 
     #[test]

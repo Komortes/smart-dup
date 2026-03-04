@@ -2,7 +2,7 @@ use crate::cli::{DeleteArgs, KeepRule};
 use crate::core::models::{DuplicateGroup, FileEntry, ScanResult};
 use anyhow::{Context, Result, bail};
 use std::fs::{self, File};
-use std::io::{BufReader, Write, stdin, stdout};
+use std::io::{BufReader, Read, Write, stdin, stdout};
 use std::path::{Path, PathBuf};
 
 pub fn run(args: DeleteArgs) -> Result<()> {
@@ -31,6 +31,7 @@ pub fn run(args: DeleteArgs) -> Result<()> {
         .sum::<u64>();
 
     let use_trash = args.trash && !args.no_trash;
+    let verify_hash = !args.no_verify_hash;
     if !args.quiet {
         println!("loaded groups: {}", scan_result.groups.len());
         println!("planned groups: {}", plans.len());
@@ -42,10 +43,12 @@ pub fn run(args: DeleteArgs) -> Result<()> {
         }
         println!("dry_run: {}", args.dry_run);
         println!("trash mode: {}", use_trash);
+        println!("verify hash: {}", verify_hash);
     }
 
     let mut deleted_files = 0_u64;
     let mut failed_files = 0_u64;
+    let mut hash_mismatch_files = 0_u64;
     let mut reclaimed_bytes = 0_u64;
     let mut skipped_groups = 0_u64;
 
@@ -68,6 +71,28 @@ pub fn run(args: DeleteArgs) -> Result<()> {
         }
 
         for file in &plan.delete_files {
+            if verify_hash {
+                match verify_file_matches_group_hash(&file.path, &plan.content_hash) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        hash_mismatch_files += 1;
+                        eprintln!(
+                            "  warn: hash mismatch for {}, skipping delete",
+                            file.path.display()
+                        );
+                        continue;
+                    }
+                    Err(err) => {
+                        failed_files += 1;
+                        eprintln!(
+                            "  warn: failed to verify hash for {}: {err}",
+                            file.path.display()
+                        );
+                        continue;
+                    }
+                }
+            }
+
             match delete_file_safely(&file.path, use_trash) {
                 Ok(_) => {
                     deleted_files += 1;
@@ -93,6 +118,7 @@ pub fn run(args: DeleteArgs) -> Result<()> {
                 planned_bytes,
                 deleted_files,
                 failed_files,
+                hash_mismatch_files,
                 skipped_groups,
                 reclaimed_bytes,
                 dry_run: args.dry_run,
@@ -106,6 +132,7 @@ pub fn run(args: DeleteArgs) -> Result<()> {
         }
         println!("deleted files: {}", deleted_files);
         println!("failed deletions: {}", failed_files);
+        println!("hash mismatch skips: {}", hash_mismatch_files);
         println!("skipped groups: {}", skipped_groups);
         println!("reclaimed bytes (actual): {}", reclaimed_bytes);
     }
@@ -120,6 +147,7 @@ struct DeleteSummary {
     planned_bytes: u64,
     deleted_files: u64,
     failed_files: u64,
+    hash_mismatch_files: u64,
     skipped_groups: u64,
     reclaimed_bytes: u64,
     dry_run: bool,
@@ -127,12 +155,13 @@ struct DeleteSummary {
 
 fn format_delete_summary_line(summary: DeleteSummary) -> String {
     format!(
-        "planned_groups={} planned_files={} planned_bytes={} deleted_files={} failed_files={} skipped_groups={} reclaimed_bytes={} dry_run={}",
+        "planned_groups={} planned_files={} planned_bytes={} deleted_files={} failed_files={} hash_mismatch_files={} skipped_groups={} reclaimed_bytes={} dry_run={}",
         summary.planned_groups,
         summary.planned_files,
         summary.planned_bytes,
         summary.deleted_files,
         summary.failed_files,
+        summary.hash_mismatch_files,
         summary.skipped_groups,
         summary.reclaimed_bytes,
         summary.dry_run
@@ -301,6 +330,30 @@ fn delete_file_safely(path: &Path, prefer_trash: bool) -> Result<()> {
         fs::remove_file(path).with_context(|| format!("remove failed for {}", path.display()))?;
         Ok(())
     }
+}
+
+fn verify_file_matches_group_hash(path: &Path, expected_hash: &str) -> Result<bool> {
+    let actual = hash_file_blake3(path)?;
+    Ok(actual.eq_ignore_ascii_case(expected_hash))
+}
+
+fn hash_file_blake3(path: &Path) -> Result<String> {
+    let file = File::open(path).with_context(|| format!("open failed: {}", path.display()))?;
+    let mut reader = BufReader::new(file);
+    let mut hasher = blake3::Hasher::new();
+    let mut buf = [0_u8; 64 * 1024];
+
+    loop {
+        let read = reader
+            .read(&mut buf)
+            .with_context(|| format!("read failed: {}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buf[..read]);
+    }
+
+    Ok(hasher.finalize().to_hex().to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -503,6 +556,7 @@ mod tests {
             quiet: false,
             trash: false,
             no_trash: true,
+            no_verify_hash: false,
             keep: KeepRule::Oldest,
             prefer_path: vec![],
         };
@@ -556,13 +610,14 @@ mod tests {
             planned_bytes: 1000,
             deleted_files: 3,
             failed_files: 1,
+            hash_mismatch_files: 2,
             skipped_groups: 1,
             reclaimed_bytes: 700,
             dry_run: false,
         });
         assert_eq!(
             line,
-            "planned_groups=2 planned_files=5 planned_bytes=1000 deleted_files=3 failed_files=1 skipped_groups=1 reclaimed_bytes=700 dry_run=false"
+            "planned_groups=2 planned_files=5 planned_bytes=1000 deleted_files=3 failed_files=1 hash_mismatch_files=2 skipped_groups=1 reclaimed_bytes=700 dry_run=false"
         );
     }
 

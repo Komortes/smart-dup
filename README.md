@@ -16,6 +16,7 @@ It is built for real directories with large file counts and focuses on fast dupl
 - Requires explicit safe mode (`--dry-run` or `--interactive`)
 - Supports keep strategies: `oldest`, `newest`, `lexicographic`, `path-priority`
 - Supports macOS Trash-based deletion with fallback to direct delete
+- Verifies file hash before deleting (can be disabled with `--no-verify-hash`)
 
 ## Build & Run
 
@@ -122,6 +123,12 @@ Force direct delete instead of Trash:
 
 ```bash
 cargo run -- delete --from out.json --interactive --no-trash
+```
+
+Skip hash verification (faster, less safe):
+
+```bash
+cargo run -- delete --from out.json --interactive --no-verify-hash
 ```
 
 Safety rule:

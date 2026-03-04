@@ -373,6 +373,65 @@ fn interactive_delete_confirm_removes_one_duplicate() {
     fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
 }
 
+#[test]
+fn interactive_delete_skips_when_file_hash_changed_after_scan() {
+    let fixture = create_basic_fixture("interactive-hash-mismatch");
+    let report = fixture.tmp.join("report.json");
+
+    let scan = run_smartdup(&[
+        "scan",
+        fixture.root.to_str().expect("utf-8 path"),
+        "--min-size",
+        "1B",
+        "--no-default-ignores",
+        "--json",
+        report.to_str().expect("utf-8 path"),
+    ]);
+    assert!(
+        scan.status.success(),
+        "scan failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&scan.stdout),
+        String::from_utf8_lossy(&scan.stderr)
+    );
+
+    fs::write(&fixture.dup_b, b"changed-after-scan").expect("mutate duplicate after scan");
+
+    let delete = run_smartdup_with_stdin(
+        &[
+            "delete",
+            "--from",
+            report.to_str().expect("utf-8 path"),
+            "--interactive",
+            "--keep",
+            "oldest",
+            "--no-trash",
+            "--quiet",
+        ],
+        "y\n",
+    );
+    assert!(
+        delete.status.success(),
+        "interactive delete with mismatch failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&delete.stdout),
+        String::from_utf8_lossy(&delete.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&delete.stdout);
+    assert!(
+        stdout.contains("hash_mismatch_files=1"),
+        "expected hash mismatch counter in summary\nstdout:\n{}",
+        stdout
+    );
+    assert!(fixture.dup_a.exists(), "keep file should remain");
+    assert!(
+        fixture.dup_b.exists(),
+        "mutated file should be skipped and remain"
+    );
+    assert!(fixture.unique.exists(), "unique file should remain");
+
+    fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
+}
+
 fn run_smartdup(args: &[&str]) -> std::process::Output {
     Command::new("cargo")
         .arg("run")
