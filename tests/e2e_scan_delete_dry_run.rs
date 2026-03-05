@@ -433,6 +433,59 @@ fn interactive_delete_skips_when_file_hash_changed_after_scan() {
 }
 
 #[test]
+fn delete_strict_fails_on_hash_mismatch() {
+    let fixture = create_basic_fixture("delete-strict-mismatch");
+    let report = fixture.tmp.join("report.json");
+
+    let scan = run_smartdup(&[
+        "scan",
+        fixture.root.to_str().expect("utf-8 path"),
+        "--min-size",
+        "1B",
+        "--no-default-ignores",
+        "--json",
+        report.to_str().expect("utf-8 path"),
+    ]);
+    assert!(
+        scan.status.success(),
+        "scan failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&scan.stdout),
+        String::from_utf8_lossy(&scan.stderr)
+    );
+
+    fs::write(&fixture.dup_b, b"changed-after-scan").expect("mutate duplicate after scan");
+
+    let delete = run_smartdup(&[
+        "delete",
+        "--from",
+        report.to_str().expect("utf-8 path"),
+        "--yes",
+        "--strict",
+        "--quiet",
+        "--no-trash",
+    ]);
+    assert!(
+        !delete.status.success(),
+        "delete --strict should fail on hash mismatch\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&delete.stdout),
+        String::from_utf8_lossy(&delete.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&delete.stderr);
+    assert!(
+        stderr.contains("strict mode failed"),
+        "expected strict mode error, got:\n{}",
+        stderr
+    );
+
+    assert!(fixture.dup_a.exists(), "keep file should remain");
+    assert!(fixture.dup_b.exists(), "mismatched file should remain");
+    assert!(fixture.unique.exists(), "unique file should remain");
+
+    fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
+}
+
+#[test]
 fn delete_yes_removes_one_duplicate_without_prompt() {
     let fixture = create_basic_fixture("delete-yes");
     let report = fixture.tmp.join("report.json");

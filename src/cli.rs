@@ -114,6 +114,10 @@ pub struct DeleteArgs {
     #[arg(long = "max-delete-bytes", value_parser = parse_size_arg)]
     pub max_delete_bytes: Option<u64>,
 
+    /// Exit with non-zero status if any delete operation fails or hash mismatch is detected
+    #[arg(long, default_value_t = false)]
+    pub strict: bool,
+
     /// Rule for deciding which file to keep
     #[arg(long, value_enum, default_value_t = KeepRule::Oldest)]
     pub keep: KeepRule,
@@ -323,6 +327,23 @@ mod tests {
             panic!("expected delete command");
         };
         assert_eq!(args.max_delete_bytes, Some(1024 * 1024));
+    }
+
+    #[test]
+    fn parse_delete_strict_flag() {
+        let cli = Cli::try_parse_from([
+            "smartdup",
+            "delete",
+            "--from",
+            "/tmp/report.json",
+            "--dry-run",
+            "--strict",
+        ])
+        .unwrap();
+        let Commands::Delete(args) = cli.command else {
+            panic!("expected delete command");
+        };
+        assert!(args.strict);
     }
 
     #[test]

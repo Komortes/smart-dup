@@ -69,6 +69,7 @@ pub fn run(args: DeleteArgs) -> Result<()> {
         if let Some(limit_bytes) = args.max_delete_bytes {
             println!("max delete bytes: {}", limit_bytes);
         }
+        println!("strict: {}", args.strict);
         println!("trash mode: {}", use_trash);
         println!("verify hash: {}", verify_hash);
     }
@@ -162,6 +163,14 @@ pub fn run(args: DeleteArgs) -> Result<()> {
         println!("hash mismatch skips: {}", hash_mismatch_files);
         println!("skipped groups: {}", skipped_groups);
         println!("reclaimed bytes (actual): {}", reclaimed_bytes);
+    }
+
+    if args.strict && (failed_files > 0 || hash_mismatch_files > 0) {
+        bail!(
+            "strict mode failed: failed_files={}, hash_mismatch_files={}",
+            failed_files,
+            hash_mismatch_files
+        );
     }
 
     Ok(())
@@ -587,6 +596,7 @@ mod tests {
             no_verify_hash: false,
             max_delete: None,
             max_delete_bytes: None,
+            strict: false,
             keep: KeepRule::Oldest,
             prefer_path: vec![],
         };
