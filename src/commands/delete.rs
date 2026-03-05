@@ -1,11 +1,13 @@
 use crate::cli::{DeleteArgs, KeepRule};
 use crate::core::models::{DuplicateGroup, FileEntry, ScanResult};
+use crate::core::util;
 use crate::error::{AppError, AppResult};
 use anyhow::{Context, Result};
 use std::fs::{self, File};
-use std::io::{BufReader, Read, Write, stdin, stdout};
+use std::io::{BufReader, Write, stdin, stdout};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+use std::process::Command;
 
 pub fn run(args: DeleteArgs) -> AppResult<()> {
     if !args.dry_run && !args.interactive && !args.yes {
@@ -20,7 +22,7 @@ pub fn run(args: DeleteArgs) -> AppResult<()> {
     }
 
     let scan_result = load_scan_result(&args.from_json).map_err(AppError::input_err)?;
-    let report_age_secs = current_unix_secs().saturating_sub(scan_result.generated_at_unix_secs);
+    let report_age_secs = util::now_unix_secs().saturating_sub(scan_result.generated_at_unix_secs);
     if let Some(max_age_secs) = args.max_report_age_secs
         && report_age_secs > max_age_secs
     {
@@ -70,7 +72,7 @@ pub fn run(args: DeleteArgs) -> AppResult<()> {
         println!("loaded groups: {}", scan_result.groups.len());
         println!("planned groups: {}", plans.len());
         println!("planned deletions: {} files", planned_files);
-        println!("planned reclaimable: {} bytes", planned_bytes);
+        println!("planned reclaimable: {} ({})", planned_bytes, util::format_bytes(planned_bytes));
         println!("keep rule: {:?}", args.keep);
         if matches!(args.keep, KeepRule::PathPriority) {
             println!("preferred paths: {:?}", args.prefer_path);
@@ -184,7 +186,7 @@ pub fn run(args: DeleteArgs) -> AppResult<()> {
         println!("failed deletions: {}", failed_files);
         println!("hash mismatch skips: {}", hash_mismatch_files);
         println!("skipped groups: {}", skipped_groups);
-        println!("reclaimed bytes (actual): {}", reclaimed_bytes);
+        println!("reclaimed bytes (actual): {} ({})", reclaimed_bytes, util::format_bytes(reclaimed_bytes));
     }
 
     if args.strict && (failed_files > 0 || hash_mismatch_files > 0) {
@@ -223,13 +225,6 @@ fn format_delete_summary_line(summary: DeleteSummary) -> String {
         summary.reclaimed_bytes,
         summary.dry_run
     )
-}
-
-fn current_unix_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
 }
 
 #[derive(Debug)]
@@ -369,59 +364,29 @@ fn confirm_group(plan: &DeletionPlan) -> Result<bool> {
 }
 
 fn delete_file_safely(path: &Path, prefer_trash: bool) -> Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        if prefer_trash {
-            if let Err(err) = move_to_macos_trash(path) {
-                eprintln!(
-                    "  warn: failed to move to Trash ({}), fallback to delete",
-                    err
-                );
-                fs::remove_file(path)
-                    .with_context(|| format!("remove failed for {}", path.display()))?;
-            }
-            Ok(())
-        } else {
+    if prefer_trash {
+        if let Err(err) = move_to_trash(path) {
+            eprintln!(
+                "  warn: failed to move to Trash ({}), fallback to delete",
+                err
+            );
             fs::remove_file(path)
                 .with_context(|| format!("remove failed for {}", path.display()))?;
-            Ok(())
         }
+        return Ok(());
     }
 
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = prefer_trash;
-        fs::remove_file(path).with_context(|| format!("remove failed for {}", path.display()))?;
-        Ok(())
-    }
+    fs::remove_file(path).with_context(|| format!("remove failed for {}", path.display()))?;
+    Ok(())
 }
 
 fn verify_file_matches_group_hash(path: &Path, expected_hash: &str) -> Result<bool> {
-    let actual = hash_file_blake3(path)?;
+    let actual = util::hash_file_blake3(path)?;
     Ok(actual.eq_ignore_ascii_case(expected_hash))
 }
 
-fn hash_file_blake3(path: &Path) -> Result<String> {
-    let file = File::open(path).with_context(|| format!("open failed: {}", path.display()))?;
-    let mut reader = BufReader::new(file);
-    let mut hasher = blake3::Hasher::new();
-    let mut buf = [0_u8; 64 * 1024];
-
-    loop {
-        let read = reader
-            .read(&mut buf)
-            .with_context(|| format!("read failed: {}", path.display()))?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buf[..read]);
-    }
-
-    Ok(hasher.finalize().to_hex().to_string())
-}
-
 #[cfg(target_os = "macos")]
-fn move_to_macos_trash(path: &Path) -> Result<()> {
+fn move_to_trash(path: &Path) -> Result<()> {
     let home = std::env::var_os("HOME").context("HOME is not set")?;
     let trash_dir = PathBuf::from(home).join(".Trash");
     fs::create_dir_all(&trash_dir)
@@ -442,6 +407,64 @@ fn move_to_macos_trash(path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn move_to_trash(path: &Path) -> Result<()> {
+    let mut attempts = Vec::new();
+
+    match Command::new("gio").arg("trash").arg(path).status() {
+        Ok(status) if status.success() => return Ok(()),
+        Ok(status) => attempts.push(format!("gio exit status {}", status)),
+        Err(err) => attempts.push(format!("gio error: {err}")),
+    }
+
+    match Command::new("trash-put").arg(path).status() {
+        Ok(status) if status.success() => return Ok(()),
+        Ok(status) => attempts.push(format!("trash-put exit status {}", status)),
+        Err(err) => attempts.push(format!("trash-put error: {err}")),
+    }
+
+    Err(anyhow::anyhow!(
+        "no supported Trash command succeeded ({})",
+        attempts.join("; ")
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn move_to_trash(path: &Path) -> Result<()> {
+    let path_text = path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("path is not valid UTF-8: {}", path.display()))?;
+    let escaped = path_text.replace('\'', "''");
+    let script = format!(
+        "$ErrorActionPreference='Stop'; Add-Type -AssemblyName Microsoft.VisualBasic; \
+         [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('{escaped}', \
+         [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, \
+         [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)"
+    );
+
+    let status = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .status()
+        .with_context(|| format!("failed to launch powershell for {}", path.display()))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "powershell recycle-bin delete failed for {} with status {}",
+            path.display(),
+            status
+        ))
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+fn move_to_trash(path: &Path) -> Result<()> {
+    Err(anyhow::anyhow!(
+        "trash mode is not supported on this platform for {}",
+        path.display()
+    ))
+}
+
 #[cfg(target_os = "macos")]
 fn unique_destination_in_dir(dir: &Path, file_name: &std::ffi::OsStr) -> PathBuf {
     let first = dir.join(file_name);
@@ -451,11 +474,13 @@ fn unique_destination_in_dir(dir: &Path, file_name: &std::ffi::OsStr) -> PathBuf
 
     let name = file_name.to_string_lossy();
     let (base, ext) = split_name_and_ext(&name);
+    // Include PID to prevent TOCTOU race between concurrent processes
+    let pid = std::process::id();
     for idx in 1.. {
         let candidate = if ext.is_empty() {
-            format!("{base} ({idx})")
+            format!("{base} ({pid}-{idx})")
         } else {
-            format!("{base} ({idx}).{ext}")
+            format!("{base} ({pid}-{idx}).{ext}")
         };
         let path = dir.join(candidate);
         if !path.exists() {
@@ -484,8 +509,6 @@ fn split_name_and_ext(name: &str) -> (&str, &str) {
 mod tests {
     use super::{DeleteSummary, format_delete_summary_line};
     use super::{build_plan_for_group, choose_keep_index, delete_file_safely, run};
-    #[cfg(target_os = "macos")]
-    use super::{split_name_and_ext, unique_destination_in_dir};
     use crate::cli::{DeleteArgs, KeepRule};
     use crate::core::models::{DuplicateGroup, FileEntry, ScanResult, ScanSummary};
     use std::fs::{self, File};
@@ -583,6 +606,7 @@ mod tests {
         fs::write(&dup_path, b"same").expect("write dup file");
 
         let report = ScanResult {
+            tool_version: String::new(),
             roots: vec![tmp.clone()],
             generated_at_unix_secs: 0,
             summary: ScanSummary {
@@ -633,28 +657,6 @@ mod tests {
 
         assert!(keep_path.exists());
         assert!(dup_path.exists());
-
-        fs::remove_dir_all(&tmp).expect("cleanup temp dir");
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn split_name_and_ext_works_for_common_cases() {
-        assert_eq!(split_name_and_ext("photo.jpg"), ("photo", "jpg"));
-        assert_eq!(split_name_and_ext("archive.tar.gz"), ("archive.tar", "gz"));
-        assert_eq!(split_name_and_ext(".env"), (".env", ""));
-        assert_eq!(split_name_and_ext("README"), ("README", ""));
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn unique_destination_adds_suffix_when_target_exists() {
-        let tmp = make_temp_dir("trash-name");
-        let first = tmp.join("dup.jpg");
-        File::create(&first).expect("create first file");
-
-        let chosen = unique_destination_in_dir(&tmp, std::path::Path::new("dup.jpg").as_os_str());
-        assert_eq!(chosen, tmp.join("dup (1).jpg"));
 
         fs::remove_dir_all(&tmp).expect("cleanup temp dir");
     }

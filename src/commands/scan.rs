@@ -1,16 +1,14 @@
 use crate::cli::ScanArgs;
 use crate::core::models::{DuplicateGroup, FileEntry, ScanResult, ScanSummary};
+use crate::core::util;
 use crate::output::export;
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufReader, Read};
-use std::path::Path;
 use std::time::Duration;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 use walkdir::{DirEntry, WalkDir};
 
 const DEFAULT_IGNORES: [&str; 3] = [".git", "node_modules", "target"];
@@ -112,8 +110,9 @@ pub fn run(args: ScanArgs) -> Result<()> {
         .sum::<u64>();
 
     let result = ScanResult {
+        tool_version: env!("CARGO_PKG_VERSION").to_string(),
         roots: args.paths.clone(),
-        generated_at_unix_secs: now_unix_secs(),
+        generated_at_unix_secs: util::now_unix_secs(),
         summary: ScanSummary {
             scanned_files,
             candidate_files,
@@ -136,7 +135,7 @@ pub fn run(args: ScanArgs) -> Result<()> {
                 "\n[{}] size={} ({}) hash={} files={}",
                 idx + 1,
                 group.file_size,
-                format_bytes(group.file_size),
+                util::format_bytes(group.file_size),
                 group.content_hash,
                 group.files.len()
             );
@@ -193,15 +192,47 @@ fn build_ignore_rules(user_ignores: &[String], no_default_ignores: bool) -> Vec<
     rules
 }
 
+/// Minimum file size to bother with partial hash pre-filtering.
+const PARTIAL_HASH_THRESHOLD: u64 = 8 * 1024;
+/// Number of bytes to read for the partial hash.
+const PARTIAL_HASH_BYTES: u64 = 4 * 1024;
+
 fn build_duplicate_groups_for_size(
     file_size: u64,
     files: Vec<FileEntry>,
     hash_progress: ProgressBar,
 ) -> Vec<DuplicateGroup> {
-    let mut by_hash: HashMap<String, Vec<FileEntry>> = HashMap::new();
+    // For large files, pre-filter by partial hash to avoid reading entire contents
+    let candidates = if file_size > PARTIAL_HASH_THRESHOLD {
+        let mut by_partial: HashMap<String, Vec<FileEntry>> = HashMap::new();
+        for file in files {
+            match util::hash_file_blake3_partial(&file.path, PARTIAL_HASH_BYTES) {
+                Ok(h) => by_partial.entry(h).or_default().push(file),
+                Err(err) => {
+                    eprintln!(
+                        "warn: failed to partial-hash {}: {err}",
+                        file.path.display()
+                    );
+                    hash_progress.inc(1);
+                }
+            }
+        }
+        let mut full_hash_candidates = Vec::new();
+        for (_, group) in by_partial {
+            if group.len() < 2 {
+                hash_progress.inc(group.len() as u64);
+            } else {
+                full_hash_candidates.extend(group);
+            }
+        }
+        full_hash_candidates
+    } else {
+        files
+    };
 
-    for file in files {
-        match hash_file_blake3(&file.path) {
+    let mut by_hash: HashMap<String, Vec<FileEntry>> = HashMap::new();
+    for file in candidates {
+        match util::hash_file_blake3(&file.path) {
             Ok(content_hash) => by_hash.entry(content_hash).or_default().push(file),
             Err(err) => eprintln!(
                 "warn: failed to hash {}: {err}",
@@ -266,32 +297,6 @@ fn hash_duplicate_groups_parallel(
         })
 }
 
-fn hash_file_blake3(path: &Path) -> Result<String> {
-    let file = File::open(path).with_context(|| format!("open failed: {}", path.display()))?;
-    let mut reader = BufReader::new(file);
-    let mut hasher = blake3::Hasher::new();
-    let mut buf = [0_u8; 64 * 1024];
-
-    loop {
-        let read = reader
-            .read(&mut buf)
-            .with_context(|| format!("read failed: {}", path.display()))?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buf[..read]);
-    }
-
-    Ok(hasher.finalize().to_hex().to_string())
-}
-
-fn now_unix_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
 fn print_scan_summary(
     result: &ScanResult,
     candidate_groups: u64,
@@ -309,7 +314,7 @@ fn print_scan_summary(
     println!(
         "  candidate size       : {} ({})",
         candidate_bytes,
-        format_bytes(candidate_bytes)
+        util::format_bytes(candidate_bytes)
     );
     if let Some(threads) = threads {
         println!("  hash threads         : {}", threads);
@@ -325,7 +330,7 @@ fn print_scan_summary(
     println!(
         "  reclaimable size     : {} ({})",
         result.summary.reclaimable_bytes,
-        format_bytes(result.summary.reclaimable_bytes)
+        util::format_bytes(result.summary.reclaimable_bytes)
     );
 }
 
@@ -337,29 +342,6 @@ fn format_summary_line(summary: &ScanSummary) -> String {
         summary.duplicate_files,
         summary.reclaimable_bytes
     )
-}
-
-fn format_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
-
-    if bytes < 1024 {
-        return format!("{bytes} B");
-    }
-
-    let mut value = bytes as f64;
-    let mut unit_index = 0usize;
-    while value >= 1024.0 && unit_index < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit_index += 1;
-    }
-
-    if value >= 100.0 {
-        format!("{value:.0} {}", UNITS[unit_index])
-    } else if value >= 10.0 {
-        format!("{value:.1} {}", UNITS[unit_index])
-    } else {
-        format!("{value:.2} {}", UNITS[unit_index])
-    }
 }
 
 fn make_walk_progress(enabled: bool) -> ProgressBar {
@@ -393,7 +375,7 @@ fn make_hash_progress(total: u64, enabled: bool) -> ProgressBar {
 
 #[cfg(test)]
 mod tests {
-    use super::{ScanSummary, build_ignore_rules, format_bytes, format_summary_line};
+    use super::{ScanSummary, build_ignore_rules, format_summary_line};
 
     #[test]
     fn default_ignore_rules_are_enabled_by_default() {
@@ -408,14 +390,6 @@ mod tests {
     fn default_ignore_rules_can_be_disabled() {
         let rules = build_ignore_rules(&["custom".to_string()], true);
         assert_eq!(rules, vec!["custom".to_string()]);
-    }
-
-    #[test]
-    fn format_bytes_uses_binary_units() {
-        assert_eq!(format_bytes(999), "999 B");
-        assert_eq!(format_bytes(1024), "1.00 KiB");
-        assert_eq!(format_bytes(1024 * 1024), "1.00 MiB");
-        assert_eq!(format_bytes(5 * 1024 * 1024 * 1024), "5.00 GiB");
     }
 
     #[test]

@@ -41,6 +41,10 @@ jobs:
             target: x86_64-unknown-linux-gnu
             archive_ext: tar.gz
             bin_ext: ""
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            archive_ext: tar.gz
+            bin_ext: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             archive_ext: zip
@@ -68,6 +72,12 @@ jobs:
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
+
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
 
       - name: Build release binary
         run: cargo build --locked --release --target ${{ matrix.target }}

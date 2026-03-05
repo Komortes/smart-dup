@@ -13,9 +13,9 @@ It is built for real directories with large file counts and focuses on fast dupl
 - Shows progress while scanning and hashing
 - Exports duplicate groups to JSON and CSV
 - Supports safe delete workflow from JSON report
-- Requires explicit safe mode (`--dry-run` or `--interactive`)
+- Requires explicit safe mode (`--dry-run`, `--interactive`, or `--yes`)
 - Supports keep strategies: `oldest`, `newest`, `lexicographic`, `path-priority`
-- Supports macOS Trash-based deletion with fallback to direct delete
+- Supports Trash-based deletion on macOS/Linux/Windows with fallback to direct delete
 - Verifies file hash before deleting (can be disabled with `--no-verify-hash`)
 
 ## Build & Run
@@ -39,6 +39,7 @@ Automated releases are configured in GitHub Actions:
 - Trigger: push tag `v*` (example: `v0.2.0`)
 - Artifacts:
   - `x86_64-unknown-linux-gnu`
+  - `x86_64-unknown-linux-musl`
   - `x86_64-pc-windows-msvc`
   - `x86_64-apple-darwin`
   - `aarch64-apple-darwin`
@@ -218,8 +219,8 @@ CSV export is flat per-file rows:
 
 - CI tests run on Linux/macOS/Windows (`.github/workflows/ci.yml`)
 - Keep filesystem logic in `std::path` (avoid OS-specific path parsing)
-- Keep delete behavior safe on non-macOS (direct delete; macOS Trash is optional)
-- For Linux distribution compatibility, prefer building/testing on an older glibc image or add a `musl` target
+- Use `--trash` for recycle-bin deletion on all supported desktop OSes, with fallback to direct delete
+- Linux release builds include `x86_64-unknown-linux-musl` for better portability across distros
 - Before each release, run a real smoke test on:
   - macOS (Intel + Apple Silicon)
   - Windows 11

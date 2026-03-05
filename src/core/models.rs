@@ -26,6 +26,8 @@ pub struct ScanSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanResult {
+    #[serde(default)]
+    pub tool_version: String,
     pub roots: Vec<PathBuf>,
     pub generated_at_unix_secs: u64,
     pub summary: ScanSummary,

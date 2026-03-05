@@ -4,6 +4,7 @@ use std::path::PathBuf;
 #[derive(Debug, Parser)]
 #[command(
     name = "smartdup",
+    version,
     about = "Fast and safe duplicate finder for files and photos"
 )]
 pub struct Cli {
@@ -27,7 +28,7 @@ pub struct ScanArgs {
     #[arg(required = true)]
     pub paths: Vec<PathBuf>,
 
-    /// Minimum file size to consider (examples: 1MB, 512KB, 4096)
+    /// Minimum file size to consider; all units are binary (1KB = 1024). Examples: 1MB, 512KB, 4096
     #[arg(long, default_value = "1B", value_parser = parse_size_arg)]
     pub min_size: u64,
 
