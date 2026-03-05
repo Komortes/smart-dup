@@ -31,6 +31,28 @@ Run tests:
 cargo test
 ```
 
+## Releases
+
+Automated releases are configured in GitHub Actions:
+
+- Workflow: `.github/workflows/release.yml`
+- Trigger: push tag `v*` (example: `v0.2.0`)
+- Artifacts:
+  - `x86_64-unknown-linux-gnu`
+  - `x86_64-pc-windows-msvc`
+  - `x86_64-apple-darwin`
+  - `aarch64-apple-darwin`
+- Each release also includes `SHA256SUMS.txt`
+
+Publish flow:
+
+```bash
+# 1) bump version in Cargo.toml
+# 2) commit changes
+git tag v0.2.0
+git push origin main --tags
+```
+
 ## CLI
 
 ```bash
@@ -163,8 +185,17 @@ cargo run -- delete --from out.json --yes --strict --quiet
 
 Safety rule:
 
-- If you do **not** pass `--dry-run`, you must pass `--interactive`.
+- If you do **not** pass `--dry-run`, you must pass `--interactive` or `--yes`.
 - `--interactive` and `--yes` are mutually exclusive.
+
+## Exit Codes
+
+- `0` success
+- `2` CLI usage/argument errors (reported by `clap`)
+- `3` input/report errors (for example missing or invalid `--from` JSON)
+- `4` safety policy violations (for example missing safe mode, stale report, delete limits)
+- `5` strict mode failure (`--strict` + failed deletions or hash mismatches)
+- `6` runtime errors (for example export write failures)
 
 ## Output Model
 
@@ -182,3 +213,14 @@ CSV export is flat per-file rows:
 - `file_size`
 - `path`
 - `modified_unix_secs`
+
+## Cross-Platform Checklist
+
+- CI tests run on Linux/macOS/Windows (`.github/workflows/ci.yml`)
+- Keep filesystem logic in `std::path` (avoid OS-specific path parsing)
+- Keep delete behavior safe on non-macOS (direct delete; macOS Trash is optional)
+- For Linux distribution compatibility, prefer building/testing on an older glibc image or add a `musl` target
+- Before each release, run a real smoke test on:
+  - macOS (Intel + Apple Silicon)
+  - Windows 11
+  - Linux (Ubuntu/Debian family at minimum)

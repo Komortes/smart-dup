@@ -1,7 +1,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
@@ -208,6 +208,11 @@ fn delete_path_priority_requires_prefer_path_argument() {
         "delete should fail without --prefer-path\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&delete.stdout),
         String::from_utf8_lossy(&delete.stderr)
+    );
+    assert_exit_code(
+        &delete,
+        4,
+        "delete --keep path-priority without --prefer-path",
     );
 
     let stderr = String::from_utf8_lossy(&delete.stderr);
@@ -470,6 +475,7 @@ fn delete_strict_fails_on_hash_mismatch() {
         String::from_utf8_lossy(&delete.stdout),
         String::from_utf8_lossy(&delete.stderr)
     );
+    assert_exit_code(&delete, 5, "delete --strict hash mismatch");
 
     let stderr = String::from_utf8_lossy(&delete.stderr);
     assert!(
@@ -571,6 +577,7 @@ fn delete_max_delete_limit_blocks_real_deletion() {
         String::from_utf8_lossy(&delete.stdout),
         String::from_utf8_lossy(&delete.stderr)
     );
+    assert_exit_code(&delete, 4, "delete --max-delete limit");
 
     let stderr = String::from_utf8_lossy(&delete.stderr);
     assert!(
@@ -623,6 +630,7 @@ fn delete_max_delete_bytes_limit_blocks_real_deletion() {
         String::from_utf8_lossy(&delete.stdout),
         String::from_utf8_lossy(&delete.stderr)
     );
+    assert_exit_code(&delete, 4, "delete --max-delete-bytes limit");
 
     let stderr = String::from_utf8_lossy(&delete.stderr);
     assert!(
@@ -677,6 +685,7 @@ fn delete_max_report_age_blocks_stale_report() {
         String::from_utf8_lossy(&delete.stdout),
         String::from_utf8_lossy(&delete.stderr)
     );
+    assert_exit_code(&delete, 4, "delete stale report with --max-report-age-secs");
 
     let stderr = String::from_utf8_lossy(&delete.stderr);
     assert!(
@@ -727,6 +736,7 @@ fn delete_rejects_interactive_and_yes_combination() {
         String::from_utf8_lossy(&delete.stdout),
         String::from_utf8_lossy(&delete.stderr)
     );
+    assert_exit_code(&delete, 2, "clap conflict: --interactive + --yes");
 
     let stderr = String::from_utf8_lossy(&delete.stderr);
     assert!(
@@ -738,22 +748,77 @@ fn delete_rejects_interactive_and_yes_combination() {
     fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
 }
 
-fn run_smartdup(args: &[&str]) -> std::process::Output {
-    Command::new("cargo")
-        .arg("run")
-        .arg("--quiet")
-        .arg("--")
+#[test]
+fn delete_missing_report_returns_input_exit_code() {
+    let tmp = make_temp_dir("delete-missing-report");
+    let missing_report = tmp.join("does-not-exist.json");
+
+    let delete = run_smartdup(&[
+        "delete",
+        "--from",
+        missing_report.to_str().expect("utf-8 path"),
+        "--dry-run",
+    ]);
+    assert!(
+        !delete.status.success(),
+        "delete should fail for missing report\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&delete.stdout),
+        String::from_utf8_lossy(&delete.stderr)
+    );
+    assert_exit_code(&delete, 3, "delete missing --from report");
+
+    let stderr = String::from_utf8_lossy(&delete.stderr);
+    assert!(
+        stderr.contains("open failed"),
+        "expected input/open error, got:\n{}",
+        stderr
+    );
+
+    fs::remove_dir_all(&tmp).expect("cleanup temp dir");
+}
+
+#[test]
+fn scan_export_to_missing_parent_returns_runtime_exit_code() {
+    let fixture = create_basic_fixture("scan-runtime-json-export");
+    let report = fixture.tmp.join("missing-parent").join("out.json");
+
+    let scan = run_smartdup(&[
+        "scan",
+        fixture.root.to_str().expect("utf-8 path"),
+        "--min-size",
+        "1B",
+        "--no-default-ignores",
+        "--json",
+        report.to_str().expect("utf-8 path"),
+    ]);
+    assert!(
+        !scan.status.success(),
+        "scan should fail for missing export parent dir\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&scan.stdout),
+        String::from_utf8_lossy(&scan.stderr)
+    );
+    assert_exit_code(&scan, 6, "scan json export into missing parent");
+
+    let stderr = String::from_utf8_lossy(&scan.stderr);
+    assert!(
+        stderr.contains("create failed"),
+        "expected runtime export error, got:\n{}",
+        stderr
+    );
+
+    fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
+}
+
+fn run_smartdup(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_smart-dup"))
         .args(args)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .expect("run smartdup command")
 }
 
-fn run_smartdup_with_stdin(args: &[&str], input: &str) -> std::process::Output {
-    let mut child = Command::new("cargo")
-        .arg("run")
-        .arg("--quiet")
-        .arg("--")
+fn run_smartdup_with_stdin(args: &[&str], input: &str) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_smart-dup"))
         .args(args)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .stdin(Stdio::piped())
@@ -771,6 +836,16 @@ fn run_smartdup_with_stdin(args: &[&str], input: &str) -> std::process::Output {
     }
 
     child.wait_with_output().expect("wait for smartdup output")
+}
+
+fn assert_exit_code(output: &Output, expected: i32, label: &str) {
+    assert_eq!(
+        output.status.code(),
+        Some(expected),
+        "{label}: expected exit code {expected}\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 fn rewrite_report_generated_at(report_path: &std::path::Path, generated_at_unix_secs: u64) {

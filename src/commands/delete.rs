@@ -1,29 +1,33 @@
 use crate::cli::{DeleteArgs, KeepRule};
 use crate::core::models::{DuplicateGroup, FileEntry, ScanResult};
-use anyhow::{Context, Result, bail};
+use crate::error::{AppError, AppResult};
+use anyhow::{Context, Result};
 use std::fs::{self, File};
 use std::io::{BufReader, Read, Write, stdin, stdout};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub fn run(args: DeleteArgs) -> Result<()> {
+pub fn run(args: DeleteArgs) -> AppResult<()> {
     if !args.dry_run && !args.interactive && !args.yes {
-        bail!("safe mode: use --dry-run, or pass --interactive, or --yes");
+        return Err(AppError::safety(
+            "safe mode: use --dry-run, or pass --interactive, or --yes",
+        ));
     }
     if matches!(args.keep, KeepRule::PathPriority) && args.prefer_path.is_empty() {
-        bail!("`--keep path-priority` requires at least one `--prefer-path <PATH>`");
+        return Err(AppError::safety(
+            "`--keep path-priority` requires at least one `--prefer-path <PATH>`",
+        ));
     }
 
-    let scan_result = load_scan_result(&args.from_json)?;
+    let scan_result = load_scan_result(&args.from_json).map_err(AppError::input_err)?;
     let report_age_secs = current_unix_secs().saturating_sub(scan_result.generated_at_unix_secs);
     if let Some(max_age_secs) = args.max_report_age_secs
         && report_age_secs > max_age_secs
     {
-        bail!(
+        return Err(AppError::safety(format!(
             "safety limit exceeded: report age {}s > --max-report-age-secs {}",
-            report_age_secs,
-            max_age_secs
-        );
+            report_age_secs, max_age_secs
+        )));
     }
 
     let plans = build_plans(&scan_result, args.keep, &args.prefer_path);
@@ -45,21 +49,19 @@ pub fn run(args: DeleteArgs) -> Result<()> {
         && let Some(limit) = args.max_delete
         && planned_files > limit
     {
-        bail!(
+        return Err(AppError::safety(format!(
             "safety limit exceeded: planned deletions {} > --max-delete {}",
-            planned_files,
-            limit
-        );
+            planned_files, limit
+        )));
     }
     if !args.dry_run
         && let Some(limit_bytes) = args.max_delete_bytes
         && planned_bytes > limit_bytes
     {
-        bail!(
+        return Err(AppError::safety(format!(
             "safety limit exceeded: planned bytes {} > --max-delete-bytes {}",
-            planned_bytes,
-            limit_bytes
-        );
+            planned_bytes, limit_bytes
+        )));
     }
 
     let use_trash = args.trash && !args.no_trash;
@@ -105,7 +107,11 @@ pub fn run(args: DeleteArgs) -> Result<()> {
             continue;
         }
 
-        let confirmed = if args.yes { true } else { confirm_group(plan)? };
+        let confirmed = if args.yes {
+            true
+        } else {
+            confirm_group(plan).map_err(AppError::runtime_err)?
+        };
         if !confirmed {
             skipped_groups += 1;
             if !args.quiet {
@@ -182,11 +188,10 @@ pub fn run(args: DeleteArgs) -> Result<()> {
     }
 
     if args.strict && (failed_files > 0 || hash_mismatch_files > 0) {
-        bail!(
+        return Err(AppError::strict(format!(
             "strict mode failed: failed_files={}, hash_mismatch_files={}",
-            failed_files,
-            hash_mismatch_files
-        );
+            failed_files, hash_mismatch_files
+        )));
     }
 
     Ok(())
