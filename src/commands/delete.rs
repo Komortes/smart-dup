@@ -39,6 +39,16 @@ pub fn run(args: DeleteArgs) -> Result<()> {
             limit
         );
     }
+    if !args.dry_run
+        && let Some(limit_bytes) = args.max_delete_bytes
+        && planned_bytes > limit_bytes
+    {
+        bail!(
+            "safety limit exceeded: planned bytes {} > --max-delete-bytes {}",
+            planned_bytes,
+            limit_bytes
+        );
+    }
 
     let use_trash = args.trash && !args.no_trash;
     let verify_hash = !args.no_verify_hash;
@@ -55,6 +65,9 @@ pub fn run(args: DeleteArgs) -> Result<()> {
         println!("assume yes: {}", args.yes);
         if let Some(limit) = args.max_delete {
             println!("max delete: {}", limit);
+        }
+        if let Some(limit_bytes) = args.max_delete_bytes {
+            println!("max delete bytes: {}", limit_bytes);
         }
         println!("trash mode: {}", use_trash);
         println!("verify hash: {}", verify_hash);
@@ -573,6 +586,7 @@ mod tests {
             no_trash: true,
             no_verify_hash: false,
             max_delete: None,
+            max_delete_bytes: None,
             keep: KeepRule::Oldest,
             prefer_path: vec![],
         };

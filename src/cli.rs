@@ -110,6 +110,10 @@ pub struct DeleteArgs {
     #[arg(long = "max-delete")]
     pub max_delete: Option<u64>,
 
+    /// Safety limit: maximum planned bytes to delete in one run (examples: 1MB, 500KB)
+    #[arg(long = "max-delete-bytes", value_parser = parse_size_arg)]
+    pub max_delete_bytes: Option<u64>,
+
     /// Rule for deciding which file to keep
     #[arg(long, value_enum, default_value_t = KeepRule::Oldest)]
     pub keep: KeepRule,
@@ -301,6 +305,24 @@ mod tests {
             panic!("expected delete command");
         };
         assert_eq!(args.max_delete, Some(10));
+    }
+
+    #[test]
+    fn parse_delete_max_delete_bytes_flag() {
+        let cli = Cli::try_parse_from([
+            "smartdup",
+            "delete",
+            "--from",
+            "/tmp/report.json",
+            "--dry-run",
+            "--max-delete-bytes",
+            "1MB",
+        ])
+        .unwrap();
+        let Commands::Delete(args) = cli.command else {
+            panic!("expected delete command");
+        };
+        assert_eq!(args.max_delete_bytes, Some(1024 * 1024));
     }
 
     #[test]

@@ -143,6 +143,12 @@ Hard safety cap on real deletions:
 cargo run -- delete --from out.json --yes --max-delete 100
 ```
 
+Hard safety cap by total bytes:
+
+```bash
+cargo run -- delete --from out.json --yes --max-delete-bytes 500MB
+```
+
 Safety rule:
 
 - If you do **not** pass `--dry-run`, you must pass `--interactive`.
