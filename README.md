@@ -158,6 +158,7 @@ cargo run -- delete --from out.json --yes --strict --quiet
 Safety rule:
 
 - If you do **not** pass `--dry-run`, you must pass `--interactive`.
+- `--interactive` and `--yes` are mutually exclusive.
 
 ## Output Model
 

@@ -83,11 +83,11 @@ pub struct DeleteArgs {
     pub dry_run: bool,
 
     /// Ask confirmation before deleting each group
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, conflicts_with = "yes")]
     pub interactive: bool,
 
     /// Confirm all deletions without per-group prompt
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, conflicts_with = "interactive")]
     pub yes: bool,
 
     /// Minimal output (summary only)
@@ -99,7 +99,7 @@ pub struct DeleteArgs {
     pub trash: bool,
 
     /// Disable Trash mode and force direct delete
-    #[arg(long = "no-trash", default_value_t = false)]
+    #[arg(long = "no-trash", default_value_t = false, conflicts_with = "trash")]
     pub no_trash: bool,
 
     /// Disable hash verification before deleting files
@@ -367,6 +367,33 @@ mod tests {
         };
         assert!(matches!(args.keep, super::KeepRule::PathPriority));
         assert_eq!(args.prefer_path.len(), 2);
+    }
+
+    #[test]
+    fn parse_delete_rejects_interactive_and_yes_together() {
+        let parsed = Cli::try_parse_from([
+            "smartdup",
+            "delete",
+            "--from",
+            "/tmp/report.json",
+            "--interactive",
+            "--yes",
+        ]);
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn parse_delete_rejects_trash_and_no_trash_together() {
+        let parsed = Cli::try_parse_from([
+            "smartdup",
+            "delete",
+            "--from",
+            "/tmp/report.json",
+            "--dry-run",
+            "--trash",
+            "--no-trash",
+        ]);
+        assert!(parsed.is_err());
     }
 
     #[test]

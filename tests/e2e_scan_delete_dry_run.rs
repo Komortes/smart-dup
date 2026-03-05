@@ -639,6 +639,51 @@ fn delete_max_delete_bytes_limit_blocks_real_deletion() {
     fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
 }
 
+#[test]
+fn delete_rejects_interactive_and_yes_combination() {
+    let fixture = create_basic_fixture("delete-conflict-interactive-yes");
+    let report = fixture.tmp.join("report.json");
+
+    let scan = run_smartdup(&[
+        "scan",
+        fixture.root.to_str().expect("utf-8 path"),
+        "--min-size",
+        "1B",
+        "--no-default-ignores",
+        "--json",
+        report.to_str().expect("utf-8 path"),
+    ]);
+    assert!(
+        scan.status.success(),
+        "scan failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&scan.stdout),
+        String::from_utf8_lossy(&scan.stderr)
+    );
+
+    let delete = run_smartdup(&[
+        "delete",
+        "--from",
+        report.to_str().expect("utf-8 path"),
+        "--interactive",
+        "--yes",
+    ]);
+    assert!(
+        !delete.status.success(),
+        "delete should fail for --interactive + --yes\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&delete.stdout),
+        String::from_utf8_lossy(&delete.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&delete.stderr);
+    assert!(
+        stderr.contains("cannot be used with"),
+        "expected clap conflict error, got:\n{}",
+        stderr
+    );
+
+    fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
+}
+
 fn run_smartdup(args: &[&str]) -> std::process::Output {
     Command::new("cargo")
         .arg("run")
