@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 use std::fs::{self, File};
 use std::io::{BufReader, Read, Write, stdin, stdout};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn run(args: DeleteArgs) -> Result<()> {
     if !args.dry_run && !args.interactive && !args.yes {
@@ -14,6 +15,17 @@ pub fn run(args: DeleteArgs) -> Result<()> {
     }
 
     let scan_result = load_scan_result(&args.from_json)?;
+    let report_age_secs = current_unix_secs().saturating_sub(scan_result.generated_at_unix_secs);
+    if let Some(max_age_secs) = args.max_report_age_secs
+        && report_age_secs > max_age_secs
+    {
+        bail!(
+            "safety limit exceeded: report age {}s > --max-report-age-secs {}",
+            report_age_secs,
+            max_age_secs
+        );
+    }
+
     let plans = build_plans(&scan_result, args.keep, &args.prefer_path);
 
     if plans.is_empty() {
@@ -63,6 +75,10 @@ pub fn run(args: DeleteArgs) -> Result<()> {
         }
         println!("dry_run: {}", args.dry_run);
         println!("assume yes: {}", args.yes);
+        println!("report age secs: {}", report_age_secs);
+        if let Some(max_age_secs) = args.max_report_age_secs {
+            println!("max report age secs: {}", max_age_secs);
+        }
         if let Some(limit) = args.max_delete {
             println!("max delete: {}", limit);
         }
@@ -202,6 +218,13 @@ fn format_delete_summary_line(summary: DeleteSummary) -> String {
         summary.reclaimed_bytes,
         summary.dry_run
     )
+}
+
+fn current_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 #[derive(Debug)]
@@ -596,6 +619,7 @@ mod tests {
             no_verify_hash: false,
             max_delete: None,
             max_delete_bytes: None,
+            max_report_age_secs: None,
             strict: false,
             keep: KeepRule::Oldest,
             prefer_path: vec![],

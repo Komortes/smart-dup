@@ -149,6 +149,12 @@ Hard safety cap by total bytes:
 cargo run -- delete --from out.json --yes --max-delete-bytes 500MB
 ```
 
+Reject stale reports older than a threshold:
+
+```bash
+cargo run -- delete --from out.json --yes --max-report-age-secs 3600
+```
+
 Fail fast in automation if any delete fails or hash mismatch is detected:
 
 ```bash

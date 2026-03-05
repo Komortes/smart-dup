@@ -114,6 +114,10 @@ pub struct DeleteArgs {
     #[arg(long = "max-delete-bytes", value_parser = parse_size_arg)]
     pub max_delete_bytes: Option<u64>,
 
+    /// Safety limit: maximum allowed age of scan report in seconds
+    #[arg(long = "max-report-age-secs")]
+    pub max_report_age_secs: Option<u64>,
+
     /// Exit with non-zero status if any delete operation fails or hash mismatch is detected
     #[arg(long, default_value_t = false)]
     pub strict: bool,
@@ -327,6 +331,24 @@ mod tests {
             panic!("expected delete command");
         };
         assert_eq!(args.max_delete_bytes, Some(1024 * 1024));
+    }
+
+    #[test]
+    fn parse_delete_max_report_age_secs_flag() {
+        let cli = Cli::try_parse_from([
+            "smartdup",
+            "delete",
+            "--from",
+            "/tmp/report.json",
+            "--dry-run",
+            "--max-report-age-secs",
+            "3600",
+        ])
+        .unwrap();
+        let Commands::Delete(args) = cli.command else {
+            panic!("expected delete command");
+        };
+        assert_eq!(args.max_report_age_secs, Some(3600));
     }
 
     #[test]

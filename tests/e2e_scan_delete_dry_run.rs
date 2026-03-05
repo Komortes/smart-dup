@@ -640,6 +640,60 @@ fn delete_max_delete_bytes_limit_blocks_real_deletion() {
 }
 
 #[test]
+fn delete_max_report_age_blocks_stale_report() {
+    let fixture = create_basic_fixture("delete-max-report-age");
+    let report = fixture.tmp.join("report.json");
+
+    let scan = run_smartdup(&[
+        "scan",
+        fixture.root.to_str().expect("utf-8 path"),
+        "--min-size",
+        "1B",
+        "--no-default-ignores",
+        "--json",
+        report.to_str().expect("utf-8 path"),
+    ]);
+    assert!(
+        scan.status.success(),
+        "scan failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&scan.stdout),
+        String::from_utf8_lossy(&scan.stderr)
+    );
+
+    rewrite_report_generated_at(&report, 0);
+
+    let delete = run_smartdup(&[
+        "delete",
+        "--from",
+        report.to_str().expect("utf-8 path"),
+        "--yes",
+        "--max-report-age-secs",
+        "1",
+        "--no-trash",
+    ]);
+    assert!(
+        !delete.status.success(),
+        "delete should fail for stale report\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&delete.stdout),
+        String::from_utf8_lossy(&delete.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&delete.stderr);
+    assert!(
+        stderr.contains("safety limit exceeded: report age"),
+        "expected stale report safety error, got:\n{}",
+        stderr
+    );
+
+    assert!(
+        fixture.dup_a.exists() && fixture.dup_b.exists() && fixture.unique.exists(),
+        "all files must remain when stale report check blocks deletion"
+    );
+
+    fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
+}
+
+#[test]
 fn delete_rejects_interactive_and_yes_combination() {
     let fixture = create_basic_fixture("delete-conflict-interactive-yes");
     let report = fixture.tmp.join("report.json");
@@ -717,6 +771,14 @@ fn run_smartdup_with_stdin(args: &[&str], input: &str) -> std::process::Output {
     }
 
     child.wait_with_output().expect("wait for smartdup output")
+}
+
+fn rewrite_report_generated_at(report_path: &std::path::Path, generated_at_unix_secs: u64) {
+    let raw = fs::read_to_string(report_path).expect("read report json");
+    let mut json: serde_json::Value = serde_json::from_str(&raw).expect("parse report json");
+    json["generated_at_unix_secs"] = serde_json::Value::from(generated_at_unix_secs);
+    let rewritten = serde_json::to_string_pretty(&json).expect("serialize report json");
+    fs::write(report_path, rewritten).expect("write report json");
 }
 
 fn make_temp_dir(tag: &str) -> PathBuf {
