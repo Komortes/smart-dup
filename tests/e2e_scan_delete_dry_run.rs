@@ -542,6 +542,56 @@ fn delete_yes_removes_one_duplicate_without_prompt() {
 }
 
 #[test]
+fn delete_yes_with_trash_mode_removes_one_duplicate() {
+    let fixture = create_basic_fixture("delete-yes-trash");
+    let report = fixture.tmp.join("report.json");
+
+    let scan = run_smartdup(&[
+        "scan",
+        fixture.root.to_str().expect("utf-8 path"),
+        "--min-size",
+        "1B",
+        "--no-default-ignores",
+        "--json",
+        report.to_str().expect("utf-8 path"),
+    ]);
+    assert!(
+        scan.status.success(),
+        "scan failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&scan.stdout),
+        String::from_utf8_lossy(&scan.stderr)
+    );
+
+    let delete = run_smartdup(&[
+        "delete",
+        "--from",
+        report.to_str().expect("utf-8 path"),
+        "--yes",
+        "--keep",
+        "oldest",
+        "--trash",
+    ]);
+    assert!(
+        delete.status.success(),
+        "delete --yes --trash failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&delete.stdout),
+        String::from_utf8_lossy(&delete.stderr)
+    );
+
+    let remaining_dups = fixture.dup_a.exists() as u8 + fixture.dup_b.exists() as u8;
+    assert_eq!(
+        remaining_dups, 1,
+        "expected exactly one duplicate file to remain after trash delete"
+    );
+    assert!(
+        fixture.unique.exists(),
+        "trash delete must not remove non-duplicate file"
+    );
+
+    fs::remove_dir_all(&fixture.tmp).expect("cleanup temp dir");
+}
+
+#[test]
 fn delete_max_delete_limit_blocks_real_deletion() {
     let fixture = create_basic_fixture("delete-max-delete");
     let report = fixture.tmp.join("report.json");

@@ -1,0 +1,98 @@
+name: Release Verify
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-package:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive_ext: tar.gz
+            bin_ext: ""
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            archive_ext: tar.gz
+            bin_ext: ""
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive_ext: zip
+            bin_ext: .exe
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive_ext: tar.gz
+            bin_ext: ""
+          - os: macos-14
+            target: aarch64-apple-darwin
+            archive_ext: tar.gz
+            bin_ext: ""
+
+    env:
+      BINARY_NAME: smart-dup
+      VERSION: verify
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Build release binary
+        run: cargo build --locked --release --target ${{ matrix.target }}
+
+      - name: Package archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGE="smart-dup-${VERSION}-${{ matrix.target }}"
+          mkdir -p "dist/${PACKAGE}"
+          cp "target/${{ matrix.target }}/release/${BINARY_NAME}${{ matrix.bin_ext }}" "dist/${PACKAGE}/"
+          cp README.md "dist/${PACKAGE}/"
+          if [[ -f LICENSE ]]; then
+            cp LICENSE "dist/${PACKAGE}/"
+          fi
+          tar -C dist -czf "dist/${PACKAGE}.tar.gz" "${PACKAGE}"
+          rm -rf "dist/${PACKAGE}"
+
+      - name: Package archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $package = "smart-dup-$env:VERSION-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          New-Item -ItemType Directory -Force -Path "dist/$package" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${env:BINARY_NAME}${{ matrix.bin_ext }}" "dist/$package/"
+          Copy-Item README.md "dist/$package/"
+          if (Test-Path LICENSE) {
+            Copy-Item LICENSE "dist/$package/"
+          }
+          Compress-Archive -Path "dist/$package/*" -DestinationPath "dist/$package.zip" -Force
+          Remove-Item -Recurse -Force "dist/$package"
+
+      - name: Upload verify artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-${{ matrix.target }}
+          path: dist/*.${{ matrix.archive_ext }}
+          if-no-files-found: error

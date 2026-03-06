@@ -34,11 +34,39 @@ Run tests:
 cargo test
 ```
 
+## Install
+
+From source:
+
+```bash
+cargo install --path .
+```
+
+From GitHub releases:
+
+macOS/Linux:
+
+```bash
+./scripts/install.sh v0.2.0
+```
+
+Windows (PowerShell):
+
+```powershell
+.\scripts\install.ps1 -Version v0.2.0
+```
+
+Notes:
+
+- Override repo if needed via `SMARTDUP_REPO=<owner/repo>` for `install.sh`.
+- Windows installer supports x64 release assets.
+
 ## Releases
 
 Automated releases are configured in GitHub Actions:
 
 - Workflow: `.github/workflows/release.yml`
+- Preflight workflow: `.github/workflows/release-verify.yml` (build/package check before tagging)
 - Trigger: push tag `v*` (example: `v0.2.0`)
 - Artifacts:
   - `x86_64-unknown-linux-gnu`
@@ -213,6 +241,7 @@ Notes:
   - Linux: `magick`/`convert` (ImageMagick)
   - Windows: PowerShell + `System.Drawing`
 - Exact photo mode works across all supported OS targets.
+- For Linux similar mode, install ImageMagick package (`magick` or `convert` command).
 
 ## Exit Codes
 
