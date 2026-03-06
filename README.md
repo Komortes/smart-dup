@@ -17,6 +17,9 @@ It is built for real directories with large file counts and focuses on fast dupl
 - Supports keep strategies: `oldest`, `newest`, `lexicographic`, `path-priority`
 - Supports Trash-based deletion on macOS/Linux/Windows with fallback to direct delete
 - Verifies file hash before deleting (can be disabled with `--no-verify-hash`)
+- Supports photo mode:
+  - exact duplicates by content (`photos`)
+  - similar duplicates via perceptual dHash (`photos --similar`)
 
 ## Build & Run
 
@@ -64,7 +67,7 @@ Commands:
 
 - `scan` scan folders and build duplicate groups
 - `delete` remove duplicates from JSON report
-- `photos` reserved command for future photo mode
+- `photos` scan photo files for exact or similar duplicates
 
 ## Scan Examples
 
@@ -188,6 +191,28 @@ Safety rule:
 
 - If you do **not** pass `--dry-run`, you must pass `--interactive` or `--yes`.
 - `--interactive` and `--yes` are mutually exclusive.
+
+## Photos Examples
+
+Exact duplicate photos (content hash):
+
+```bash
+cargo run -- photos ~/Pictures
+```
+
+Similar photos (perceptual dHash):
+
+```bash
+cargo run -- photos ~/Pictures --similar --threshold 8
+```
+
+Notes:
+
+- Similar mode backend per OS:
+  - macOS: `sips`
+  - Linux: `magick`/`convert` (ImageMagick)
+  - Windows: PowerShell + `System.Drawing`
+- Exact photo mode works across all supported OS targets.
 
 ## Exit Codes
 

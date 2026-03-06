@@ -72,7 +72,11 @@ pub fn run(args: DeleteArgs) -> AppResult<()> {
         println!("loaded groups: {}", scan_result.groups.len());
         println!("planned groups: {}", plans.len());
         println!("planned deletions: {} files", planned_files);
-        println!("planned reclaimable: {} ({})", planned_bytes, util::format_bytes(planned_bytes));
+        println!(
+            "planned reclaimable: {} ({})",
+            planned_bytes,
+            util::format_bytes(planned_bytes)
+        );
         println!("keep rule: {:?}", args.keep);
         if matches!(args.keep, KeepRule::PathPriority) {
             println!("preferred paths: {:?}", args.prefer_path);
@@ -186,7 +190,11 @@ pub fn run(args: DeleteArgs) -> AppResult<()> {
         println!("failed deletions: {}", failed_files);
         println!("hash mismatch skips: {}", hash_mismatch_files);
         println!("skipped groups: {}", skipped_groups);
-        println!("reclaimed bytes (actual): {} ({})", reclaimed_bytes, util::format_bytes(reclaimed_bytes));
+        println!(
+            "reclaimed bytes (actual): {} ({})",
+            reclaimed_bytes,
+            util::format_bytes(reclaimed_bytes)
+        );
     }
 
     if args.strict && (failed_files > 0 || hash_mismatch_files > 0) {

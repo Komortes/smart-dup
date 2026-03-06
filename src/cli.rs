@@ -18,7 +18,7 @@ pub enum Commands {
     Scan(ScanArgs),
     /// Delete duplicates from a previous scan result
     Delete(DeleteArgs),
-    /// Photo-specific commands (MVP placeholder)
+    /// Scan photos for exact or visually similar duplicates
     Photos(PhotosArgs),
 }
 
@@ -138,7 +138,7 @@ pub struct PhotosArgs {
     #[arg(required = true)]
     pub paths: Vec<PathBuf>,
 
-    /// Enable similar image mode (post-MVP)
+    /// Enable visually similar mode (dHash)
     #[arg(long, default_value_t = false)]
     pub similar: bool,
 
@@ -428,5 +428,33 @@ mod tests {
         };
         assert!(args.no_progress);
         assert!(args.quiet);
+    }
+
+    #[test]
+    fn parse_photos_default_exact_mode() {
+        let cli = Cli::try_parse_from(["smartdup", "photos", "/tmp"]).unwrap();
+        let Commands::Photos(args) = cli.command else {
+            panic!("expected photos command");
+        };
+        assert!(!args.similar);
+        assert_eq!(args.threshold, 8);
+    }
+
+    #[test]
+    fn parse_photos_similar_and_threshold() {
+        let cli = Cli::try_parse_from([
+            "smartdup",
+            "photos",
+            "/tmp",
+            "--similar",
+            "--threshold",
+            "12",
+        ])
+        .unwrap();
+        let Commands::Photos(args) = cli.command else {
+            panic!("expected photos command");
+        };
+        assert!(args.similar);
+        assert_eq!(args.threshold, 12);
     }
 }
