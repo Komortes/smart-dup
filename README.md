@@ -4,20 +4,14 @@
 
 It is built for real directories with large file counts and focuses on fast duplicate detection with a safe, explicit deletion workflow.
 
+Fast, safe duplicate finder for large folders with exact hashing, photo mode, dry-run, and guarded deletion.
+
 ## Status
 
-`smart-dup` is ready to use for exact duplicate scans and safe cleanup workflows.
+Ready for exact duplicate scans and safe cleanup workflows.
 
-Current stable areas:
-
-- exact duplicate file scans
-- JSON and CSV export
-- safe delete flow with dry-run, confirmation, and guard rails
-- release binaries for macOS, Linux, and Windows
-
-Current experimental area:
-
-- `photos --similar`
+- Stable: `scan`, `delete`, JSON/CSV export, release binaries
+- Experimental: `photos --similar`
 
 ## What it does
 
@@ -82,30 +76,6 @@ Notes:
 - Default release repo is `Komortes/smart-dup`.
 - Override repo if needed via `SMARTDUP_REPO=<owner/repo>` for `install.sh`.
 - Windows installer supports x64 release assets.
-
-## Releases
-
-Automated releases are configured in GitHub Actions:
-
-- Workflow: `.github/workflows/release.yml`
-- Preflight workflow: `.github/workflows/release-verify.yml` (build/package check before tagging)
-- Trigger: push tag `v*` (example: `v0.2.0`)
-- Artifacts:
-  - `x86_64-unknown-linux-gnu`
-  - `x86_64-unknown-linux-musl`
-  - `x86_64-pc-windows-msvc`
-  - `x86_64-apple-darwin`
-  - `aarch64-apple-darwin`
-- Each release also includes `SHA256SUMS.txt`
-
-Publish flow:
-
-```bash
-# 1) bump version in Cargo.toml
-# 2) commit changes
-git tag v0.2.0
-git push origin main --tags
-```
 
 ## CLI
 
@@ -282,6 +252,12 @@ Example delete dry-run output:
 ```text
 planned_groups=37 planned_files=57 planned_bytes=812345678 deleted_files=0 failed_files=0 hash_mismatch_files=0 skipped_groups=0 reclaimed_bytes=0 dry_run=true
 ```
+
+## Releases
+
+- GitHub Releases include binaries for macOS, Linux, and Windows
+- Linux assets are published in both `gnu` and `musl` variants
+- Each release also includes `SHA256SUMS.txt`
 
 ## Exit Codes
 
