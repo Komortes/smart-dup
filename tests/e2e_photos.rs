@@ -51,7 +51,7 @@ fn photos_exact_finds_duplicate_photo_files() {
 
 #[cfg(not(target_os = "macos"))]
 #[test]
-fn photos_similar_runs_on_non_macos_and_reports_summary() {
+fn photos_similar_fails_when_no_photo_can_be_decoded() {
     let tmp = make_temp_dir("photos-similar-non-macos");
     let root = tmp.join("photos");
     fs::create_dir_all(&root).expect("create photos dir");
@@ -63,19 +63,18 @@ fn photos_similar_runs_on_non_macos_and_reports_summary() {
 
     let out = run_smartdup(&["photos", root.to_str().expect("utf-8 path"), "--similar"]);
     assert!(
-        out.status.success(),
-        "photos --similar should return summary on non-macOS\nstdout:\n{}\nstderr:\n{}",
+        !out.status.success(),
+        "photos --similar should fail when no image can be decoded\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
+    assert_eq!(out.status.code(), Some(6), "expected runtime exit code 6");
 
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stdout.contains("photos_similar")
-            && stdout.contains("scanned=2")
-            && stdout.contains("threshold=8"),
-        "expected similar mode summary, got:\n{}",
-        stdout
+        stderr.contains("could not decode any photo files"),
+        "expected decode failure message, got:\n{}",
+        stderr
     );
 
     fs::remove_dir_all(&tmp).expect("cleanup temp dir");

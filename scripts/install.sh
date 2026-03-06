@@ -8,7 +8,7 @@ fi
 
 VERSION_INPUT="$1"
 INSTALL_DIR="${2:-/usr/local/bin}"
-REPO="${SMARTDUP_REPO:-oleksandrskoruk/smart-dup}"
+REPO="${SMARTDUP_REPO:-Komortes/smart-dup}"
 
 if [[ "$VERSION_INPUT" == v* ]]; then
   TAG="$VERSION_INPUT"

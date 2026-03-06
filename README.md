@@ -4,6 +4,21 @@
 
 It is built for real directories with large file counts and focuses on fast duplicate detection with a safe, explicit deletion workflow.
 
+## Status
+
+`smart-dup` is ready to use for exact duplicate scans and safe cleanup workflows.
+
+Current stable areas:
+
+- exact duplicate file scans
+- JSON and CSV export
+- safe delete flow with dry-run, confirmation, and guard rails
+- release binaries for macOS, Linux, and Windows
+
+Current experimental area:
+
+- `photos --similar`
+
 ## What it does
 
 - Scans one or many folders recursively
@@ -20,6 +35,12 @@ It is built for real directories with large file counts and focuses on fast dupl
 - Supports photo mode:
   - exact duplicates by content (`photos`)
   - similar duplicates via perceptual dHash (`photos --similar`)
+
+## Supported Platforms
+
+- macOS: Apple Silicon and Intel release binaries
+- Linux: `x86_64` release binaries (`gnu` and `musl`)
+- Windows: `x86_64` release binary
 
 ## Build & Run
 
@@ -58,6 +79,7 @@ Windows (PowerShell):
 
 Notes:
 
+- Default release repo is `Komortes/smart-dup`.
 - Override repo if needed via `SMARTDUP_REPO=<owner/repo>` for `install.sh`.
 - Windows installer supports x64 release assets.
 
@@ -242,6 +264,24 @@ Notes:
   - Windows: PowerShell + `System.Drawing`
 - Exact photo mode works across all supported OS targets.
 - For Linux similar mode, install ImageMagick package (`magick` or `convert` command).
+- Similar grouping is based on connected components, so `A~B` and `B~C` can appear in one group even if `A` and `C` are not direct near-matches.
+- If similar mode cannot decode any photo on the current system, the command exits with an error instead of pretending there were no matches.
+
+Example scan output:
+
+```text
+summary: scanned_files=18452 duplicate_groups=37 duplicate_files=94 reclaimable_bytes=812345678
+
+[1] size=5242880 (5.00 MiB) hash=...
+  - /Users/me/Archive/video-copy.mov
+  - /Users/me/Desktop/video-copy.mov
+```
+
+Example delete dry-run output:
+
+```text
+planned_groups=37 planned_files=57 planned_bytes=812345678 deleted_files=0 failed_files=0 hash_mismatch_files=0 skipped_groups=0 reclaimed_bytes=0 dry_run=true
+```
 
 ## Exit Codes
 
@@ -279,3 +319,9 @@ CSV export is flat per-file rows:
   - macOS (Intel + Apple Silicon)
   - Windows 11
   - Linux (Ubuntu/Debian family at minimum)
+
+## Known Limitations
+
+- `photos --similar` depends on OS-specific image tooling and is less predictable than exact hashing mode.
+- HEIC/HEIF behavior depends on what the current OS can decode.
+- Linux similar mode requires ImageMagick tools to be installed.

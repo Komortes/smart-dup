@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Version,
     [string]$InstallDir = "$env:USERPROFILE\bin",
-    [string]$Repo = "oleksandrskoruk/smart-dup"
+    [string]$Repo = "Komortes/smart-dup"
 )
 
 $ErrorActionPreference = "Stop"

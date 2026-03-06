@@ -219,6 +219,14 @@ fn run_similar_mode(photos: &[PhotoFile], threshold: u8) -> Result<()> {
         }
     }
 
+    if similar_photos.is_empty() {
+        anyhow::bail!(
+            "photos --similar could not decode any photo files on this system; scanned={} skipped={}",
+            photos.len(),
+            skipped
+        );
+    }
+
     if similar_photos.len() < 2 {
         println!(
             "photos_similar scanned={} comparable={} skipped={} groups=0 threshold={}",
@@ -263,6 +271,7 @@ fn run_similar_mode(photos: &[PhotoFile], threshold: u8) -> Result<()> {
 fn group_similar_photos(photos: &[SimilarPhoto], threshold: u8) -> Vec<Vec<SimilarPhoto>> {
     let mut dsu = DisjointSet::new(photos.len());
 
+    // Similar groups are connected components: A~B and B~C will end up together.
     for i in 0..photos.len() {
         for j in (i + 1)..photos.len() {
             if hamming_distance_u64(photos[i].dhash, photos[j].dhash) <= u32::from(threshold) {
