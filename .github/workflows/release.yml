@@ -49,11 +49,11 @@ jobs:
             target: x86_64-pc-windows-msvc
             archive_ext: zip
             bin_ext: .exe
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             archive_ext: tar.gz
             bin_ext: ""
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
             archive_ext: tar.gz
             bin_ext: ""
